@@ -398,12 +398,22 @@ verify_app() {
   esac
   [ -f "$APP/game.love" ] || fail "game.love did not make it into the bundle"
   # Not a warning: an app missing this links and installs perfectly, then dies
-  # at launch with "Library not loaded: @rpath/libopenal.1.dylib". Xcode does
-  # not embed a bare .dylib out of an xcframework on its own.
-  [ -f "$APP/Frameworks/libopenal.1.dylib" ] \
-    || fail "libopenal.1.dylib is not embedded in the bundle.
+  # at launch with "Library not loaded". Xcode does not embed anything out of
+  # an xcframework on its own -- the script phase does, as a FRAMEWORK, for the
+  # App Store Connect reason written out in project.yml.
+  [ -f "$APP/Frameworks/openal.framework/openal" ] \
+    || fail "openal.framework is not embedded in the bundle.
 The 'Embed and sign openal-soft' script phase in mobile/visionos/project.yml
 did not run or did not find its slice."
+  # Embedded and linked have to agree. They did not once: the framework was
+  # embedded while deps/openal.xcframework still carried the old
+  # @rpath/libopenal.1.dylib install_name, so the app linked a name nothing in
+  # the bundle answered to and died at launch. Only the id the linker actually
+  # copied into this binary proves the two halves match.
+  otool -L "$bin" | grep -q "@rpath/openal.framework/openal" \
+    || fail "$(basename "$bin") links openal under a name the bundle does not
+provide -- deps/openal.xcframework predates the framework layout. Re-run
+mobile/visionos/deps/build_deps.sh, which sets the install_name."
 
   # Assert the Info.plist keys that make this an immersive visionOS app rather
   # than a window. Worth checking explicitly: XcodeGen's `info:` block

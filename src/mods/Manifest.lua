@@ -8,7 +8,15 @@ local Version = require("src.core.Version")
 local Manifest = {}
 
 Manifest.PROFILES = { content = true, overhaul = true, total_conversion = true }
-Manifest.PERMISSIONS = { network = true, filesystem = true, engine_internals = true }
+-- "compute" is upstream's name for a mod that wants love.thread.  Upstream
+-- sandboxes the love table and hands threads out only against this name; this
+-- fork has no sandbox, so a mod already has love.thread whether it asks or
+-- not.  The name is accepted rather than granted: declaring it changes
+-- nothing, and refusing it would be worse than pointless, because an unknown
+-- permission makes the loader skip the WHOLE mod with a warning instead of an
+-- error -- a mod that vanishes while the load reports success.
+Manifest.PERMISSIONS = { network = true, filesystem = true, engine_internals = true,
+                         compute = true }
 
 -- link-relevant registries; a mod that writes into one of these while
 -- declaring affects_link = false gets an attributed warning from the loader
