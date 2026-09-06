@@ -184,6 +184,27 @@ function TextBox:beginLine()
   table.insert(self.shown, {})
 end
 
+-- The lines currently ON the box, as text rather than as glyph codes.
+--
+-- `shown` holds what is drawn, but as encoded codes mid-type -- the right
+-- shape for the renderer and the wrong one for anybody who wants to READ the
+-- box: a mod mirroring dialogue into a world window, a screen reader, a test
+-- asserting what a script said. Those want the source lines, and the box
+-- already knows which ones they are -- lineIndex is the newest and #shown says
+-- how many are up.
+--
+-- nil rather than an empty table when there is nothing on it, so a caller can
+-- tell "no box" from "a box with a blank line".
+function TextBox:visibleText()
+  local page = self.pages and self.pages[self.pageIndex]
+  if not page then return nil end
+  local out, count = {}, #(self.shown or {})
+  for i = math.max(1, self.lineIndex - count + 1), self.lineIndex do
+    if page[i] ~= nil then out[#out + 1] = page[i] end
+  end
+  return #out > 0 and out or nil
+end
+
 function TextBox:update(dt)
   local input = self.game.input
   self.blink = (self.blink + 1) % 60
