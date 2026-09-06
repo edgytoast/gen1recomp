@@ -255,17 +255,36 @@ local function useOn(game, battle, id, target, list, moveIndex, picker)
 
   if result == "consumed" then
     consume(game, id)
+    -- refresh counts in the list
+    for i, it in ipairs(list.items) do
+      if it.value == id then
+        local left = game.save.inventory[id]
+        if left then it.right = "x" .. left else table.remove(list.items, i) end
+        break
+      end
+    end
+    list.index = math.min(list.index, math.max(1, #list.items))
     if extra and extra.evolveTo then
-      list:close()
+      -- engine/menus/start_sub_menus.asm:408 .useItem_partyMenu
       local Evolution = require("src.pokemon.Evolution")
-      Evolution.evolve(game, target, extra.evolveTo)
+      -- item_effects.asm ItemUseEvoStone sets wForceEvolution before
+      -- TryEvolvingMon, so a stone evolution's B press is read and
+      -- discarded (EvolutionState.lua's cancelable check).  via = "ITEM"
+      -- is what makes that non-cancelable here, same as the RARE_CANDY
+      -- call below; without it the stone -- already consumed above --
+      -- could be cancelled out from under the player.
+      Evolution.evolve(game, target, extra.evolveTo, nil, "ITEM")
       return
     end
     -- RARE CANDY: after the level text, the stat window, any level-up
     -- moves and a level evolution follow (item_effects.asm .useRareCandy
     -- runs PrintStatsBox, LearnMoveFromLevelUp and TryEvolvingMon)
     if extra and extra.leveledTo and target then
-      list:close()
+      -- ...but the bag stays open underneath it all: RARE_CANDY is in
+      -- pokered's UsableItems_PartyMenu (data/items/use_party.asm), and
+      -- .useItem_partyMenu jumps back to StartMenu_Item once UseItem
+      -- returns, cursor still on the candy (start_sub_menus.asm) -- so
+      -- mashing A burns through a stack of them.
       showMessages(game, payload, function()
         local StatBox = require("src.battle.BattleState").StatBox
         game.stack:push(StatBox.new(game, target, function()
@@ -304,15 +323,6 @@ local function useOn(game, battle, id, target, list, moveIndex, picker)
       end)
       return
     end
-    -- refresh counts in the list
-    for i, it in ipairs(list.items) do
-      if it.value == id then
-        local left = game.save.inventory[id]
-        if left then it.right = "x" .. left else table.remove(list.items, i) end
-        break
-      end
-    end
-    list.index = math.min(list.index, math.max(1, #list.items))
     -- HP medicine: fill the bar in the still-open picker first, then print
     -- and close, the order item_effects.asm .doneHealing runs in
     -- (SFX_HEAL_HP -> UpdateHPBar2 -> RedrawPartyMenu prints the message).

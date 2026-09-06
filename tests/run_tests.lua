@@ -2847,6 +2847,21 @@ do
                       { labels = { "NORTH", "SOUTH" }, firstItem = 2 })
   eq(box.labels[1], "NORTH", "ChoiceBox takes given labels")
   eq(box.firstItem, 2, "ChoiceBox takes a given first row")
+
+  -- The level-up stats box, same question: a mod standing the UI off the
+  -- 160x144 screen has only the state's shape to go on, and this box was the
+  -- last readout with nothing on it to recognise.  statRows is what draw()
+  -- paints from, so a mirror and the flat box cannot say different things.
+  local StatBox = require("src.battle.BattleState").StatBox
+  local sb = StatBox.new(stubGame({}),
+    { stats = { attack = 23, defense = 25, speed = 12, special = 14 } })
+  eq(sb.isStatBox, true, "StatBox says what it is")
+  local srows = sb:statRows()
+  eq(#srows, 4, "StatBox names four rows")
+  eq(srows[1][1], "ATTACK", "StatBox row 1 is ATTACK")
+  eq(srows[1][2], 23, "StatBox row 1 carries the value")
+  eq(srows[4][1], "SPECIAL", "StatBox row 4 is SPECIAL")
+  eq(srows[4][2], 14, "StatBox row 4 carries the value")
 end
 end
 

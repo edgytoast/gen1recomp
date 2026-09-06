@@ -899,10 +899,10 @@ index 0000000..b9b1c1e
 +#endif // LOVE_XR_WRAP_XR_H
 diff --git a/src/modules/xr/wrap_XR.mm b/src/modules/xr/wrap_XR.mm
 new file mode 100644
-index 0000000..fbf1dc8
+index 0000000..3fadaa8
 --- /dev/null
 +++ b/src/modules/xr/wrap_XR.mm
-@@ -0,0 +1,2870 @@
+@@ -0,0 +1,2887 @@
 +/**
 + * love.xr -- CompositorServices and ARKit, for visionOS.
 + *
@@ -2200,6 +2200,23 @@ index 0000000..fbf1dc8
 +// lists on the main queue.
 +static void pollSpatialDevices(void)
 +{
++	// First the other way controls die, and -- measured on the device -- the
++	// one that actually happens: the providers STOP (state 3) when focus goes
++	// elsewhere. The session's state-change handler revives them, but that
++	// handler is rate-limited against its own success notification, so a
++	// revival that does not take while the app is unfocused would be swallowed
++	// and never tried again. This is asked only after a second with nothing
++	// tracked, so it costs nothing while the controllers are merely still.
++	if (g_accessoryTracking != nullptr
++		&& ar_data_provider_get_state(g_accessoryTracking)
++		   != ar_data_provider_state_running)
++	{
++		printf("[xr] nothing tracked and the provider is not running; running providers again\n");
++		fflush(stdout);
++		runProviders();
++		return;
++	}
++
 +	NSArray<id<GCDevice>> *found = spatialDevices();
 +	int held = 0;
 +	bool same = true;

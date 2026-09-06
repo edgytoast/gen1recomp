@@ -450,9 +450,24 @@ end
 -- 11x10 over the battle, dismissed with A/B)
 local StatBox = {}
 StatBox.__index = StatBox
+-- What this box IS, said on the box itself.  It is a plain table like every
+-- other state, and a mod that stands the UI somewhere else -- in the world,
+-- on a device, anywhere off the 160x144 screen -- has nothing else to
+-- recognise it by; without this the level-up stats were the one readout that
+-- still arrived on a panel over the player's face.
+StatBox.isStatBox = true
 
 function StatBox.new(game, mon, onDone)
   return setmetatable({ game = game, mon = mon, onDone = onDone }, StatBox)
+end
+
+-- The four rows it prints, label and value, in the original's order.
+-- Pure: draw() paints from this and so does anyone mirroring the box, which
+-- is what keeps the two from drifting apart.
+function StatBox:statRows()
+  local s = self.mon.stats
+  return { { Strings("ATTACK"), s.attack }, { Strings("DEFENSE"), s.defense },
+           { Strings("SPEED"), s.speed }, { Strings("SPECIAL"), s.special } }
 end
 
 function StatBox:update()
@@ -466,9 +481,7 @@ end
 function StatBox:draw()
   Font.drawBox(9, 2, 11, 10)
   love.graphics.setColor(0, 0, 0, 1)
-  local s = self.mon.stats
-  local rows = { { "ATTACK", s.attack }, { "DEFENSE", s.defense },
-                 { "SPEED", s.speed }, { "SPECIAL", s.special } }
+  local rows = self:statRows()
   for i, r in ipairs(rows) do
     Font.draw(r[1], 88, 24 + (i - 1) * 16)
     Font.draw(("%3d"):format(r[2]), 128, 32 + (i - 1) * 16)
