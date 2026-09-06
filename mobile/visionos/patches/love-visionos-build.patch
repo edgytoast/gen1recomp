@@ -899,10 +899,10 @@ index 0000000..b9b1c1e
 +#endif // LOVE_XR_WRAP_XR_H
 diff --git a/src/modules/xr/wrap_XR.mm b/src/modules/xr/wrap_XR.mm
 new file mode 100644
-index 0000000..c38a8d8
+index 0000000..fbf1dc8
 --- /dev/null
 +++ b/src/modules/xr/wrap_XR.mm
-@@ -0,0 +1,2704 @@
+@@ -0,0 +1,2870 @@
 +/**
 + * love.xr -- CompositorServices and ARKit, for visionOS.
 + *
@@ -2010,6 +2010,11 @@ index 0000000..c38a8d8
 +// string, which is a guess dressed as an identifier.
 +static id<GCDevice> g_padDevice[2] = { nil, nil };
 +static std::atomic<bool> g_accessoryLive(false);
++// Whether the loaded accessories carry an AIM point as well as a grip. A pair
++// of Sense controllers is one model twice, so this is one flag rather than
++// two: what it answers is a property of the hardware, not of which hand is
++// holding which half.
++static std::atomic<bool> g_accessoryAim(false);
 +
 +static void runProviders(void);
 +
@@ -2060,6 +2065,14 @@ index 0000000..c38a8d8
 +	NSArray<id<GCDevice>> *devices = spatialDevices();
 +	printf("[xr] %lu spatial device(s)\n", (unsigned long) devices.count);
 +	fflush(stdout);
++
++	// Start from nothing. These are re-filled below from what actually
++	// loaded, and holding a controller the system has taken away is worse
++	// than holding none: w_sticks and w_buttons read them every frame and a
++	// dead one answers zero rather than failing, which is a stuck stick
++	// nobody can tell from a still one.
++	g_padDevice[0] = nil;
++	g_padDevice[1] = nil;
 +	if (devices.count == 0)
 +		return;
 +
@@ -2080,6 +2093,23 @@ index 0000000..c38a8d8
 +					if (side == ar_accessory_chirality_right) g_padDevice[1] = d;
 +					printf("[xr]   accessory \"%s\" inherent chirality=%d\n",
 +						   ar_accessory_get_name(accessory), (int) side);
++					// The named points on the device. A controller is not
++					// only a grip: the aim point is where the maker says a
++					// ray leaves it, and pointing along the grip instead
++					// sends the beam up out of the fist -- a wrist bent
++					// backwards to hit anything. Read here, once, because
++					// which points exist is a property of the model.
++					ar_strings_t names =
++						ar_accessory_copy_location_names(accessory);
++					if (names != nullptr)
++					{
++						ar_strings_enumerate_strings(names, ^bool(const char *n) {
++							printf("[xr]     location \"%s\"\n", n);
++							if (n != nullptr && strcmp(n, ar_accessory_location_name_aim) == 0)
++								g_accessoryAim.store(true, std::memory_order_release);
++							return true;
++						});
++					}
 +				}
 +				else
 +					printf("[xr]   an accessory would not load\n");
@@ -2154,6 +2184,59 @@ index 0000000..c38a8d8
 +		logController(c);
 +}
 +
++// The controller objects we hold, against the ones the system has.
++//
++// Losing focus -- a glance into Mac Virtual Display, a moment in another
++// app's window -- takes the spatial pair away from this app, and regaining it
++// hands them back as NEW GCDevice objects. The ones cached in g_padDevice are
++// then corpses: the sticks read zero for ever, the accessory provider is
++// tracking accessories loaded FROM those corpses, and every control the
++// player has is gone until the app is restarted. That is exactly the reported
++// symptom, and it never repairs itself.
++//
++// The connect notifications are meant to say so and we do watch them. This
++// asks anyway, because a notification that never arrives cannot be told apart
++// from one that was never sent, and the cost of asking is comparing two short
++// lists on the main queue.
++static void pollSpatialDevices(void)
++{
++	NSArray<id<GCDevice>> *found = spatialDevices();
++	int held = 0;
++	bool same = true;
++	for (int i = 0; i < 2; i++)
++	{
++		if (g_padDevice[i] == nil)
++			continue;
++		held++;
++		if (![found containsObject:g_padDevice[i]])
++			same = false;
++	}
++	if (same && (int) found.count == held)
++		return;
++	printf("[xr] spatial devices changed under us (%lu present, %d held); rebuilding\n",
++		   (unsigned long) found.count, held);
++	fflush(stdout);
++	rebuildAccessories();
++}
++
++// Nothing has been tracked for a while: ask, once a second at most, whether
++// the reason is that our controllers are no longer the system's. Called from
++// the render thread, which is why the asking itself happens on the main queue
++// -- GameController's list and rebuildAccessories both belong there.
++static std::atomic<int> g_accessoryIdle(0);
++static void noteAccessoryIdle(bool idle)
++{
++	if (!idle)
++	{
++		g_accessoryIdle.store(0, std::memory_order_relaxed);
++		return;
++	}
++	if (g_accessoryIdle.fetch_add(1, std::memory_order_relaxed) < 90)
++		return;
++	g_accessoryIdle.store(0, std::memory_order_relaxed);
++	dispatch_async(dispatch_get_main_queue(), ^{ pollSpatialDevices(); });
++}
++
 +// Every provider that currently exists, started together.
 +//
 +// One place, because ar_session_run REPLACES the provider set rather than
@@ -2196,6 +2279,35 @@ index 0000000..c38a8d8
 +	}
 +
 +	g_arSession = ar_session_create();
++
++	// A provider that stops, stops for good unless something runs it again.
++	//
++	// visionOS takes hand and accessory data away from an app that is not the
++	// one being looked at, and there is no promise anywhere that it hands
++	// them back by itself: the reported symptom is that a single glance into
++	// another window costs every control for the rest of the run. So the
++	// session says when a provider leaves the running state, and this puts
++	// them all back -- rate-limited, because ar_session_run fires this very
++	// handler again on success and an unguarded revival is a loop.
++	ar_session_set_data_provider_state_change_handler(g_arSession, nullptr,
++		^(ar_data_providers_t providers, ar_data_provider_state_t state,
++		  ar_error_t error, ar_data_provider_t failed) {
++			(void) providers; (void) failed;
++			printf("[xr] provider state -> %d%s\n", (int) state,
++				   error != nullptr ? " (with an error)" : "");
++			fflush(stdout);
++			if (state == ar_data_provider_state_running
++				|| state == ar_data_provider_state_initialized)
++				return;
++			static CFTimeInterval lastRevive = 0;
++			CFTimeInterval now = CACurrentMediaTime();
++			if (now - lastRevive < 2.0)
++				return;
++			lastRevive = now;
++			printf("[xr] providers stopped; running them again\n");
++			fflush(stdout);
++			runProviders();
++		});
 +
 +	// ASK FIRST. ar_session_run does not request authorization -- it just
 +	// runs, and a provider whose permission was never granted produces
@@ -3287,11 +3399,29 @@ index 0000000..c38a8d8
 +	if (!g_accessoryLive.load(std::memory_order_acquire) || g_accessoryTracking == nullptr)
 +		return 1;
 +
++	// The provider's own state, whenever it CHANGES. If the controls die with
++	// focus and this says the provider stopped, the repair belongs here rather
++	// than in the device list -- and the log says which without guessing.
++	{
++		static int lastState = -1;
++		int state = (int) ar_data_provider_get_state(g_accessoryTracking);
++		if (state != lastState)
++		{
++			lastState = state;
++			printf("[xr] accessory provider state=%d (1=running)\n", state);
++			fflush(stdout);
++		}
++	}
++
 +	ar_accessory_anchors_t anchors =
 +		ar_accessory_tracking_provider_get_latest_anchors(g_accessoryTracking);
 +	if (anchors == nullptr)
++	{
++		noteAccessoryIdle(true);
 +		return 1;
++	}
 +
++	__block int tracked = 0;
 +	ar_accessory_anchors_enumerate_anchors(anchors, ^bool(ar_accessory_anchor_t anchor) {
 +		// Orientation without a position, or nothing at all: either way the
 +		// position cannot be trusted, and a prop that jumps to a guessed one
@@ -3341,9 +3471,45 @@ index 0000000..c38a8d8
 +		lua_pushnumber(L, q.vector.w); lua_rawseti(L, -2, 4);
 +		lua_setfield(L, -2, "quat");
 +		lua_setfield(L, -2, "pose");
++		tracked++;
++
++		// ...and the AIM point beside it, where the accessory has one.
++		//
++		// Not a second name for the same thing: the grip is where the hand
++		// HOLDS the device and the aim is where a ray LEAVES it, and on this
++		// hardware they are most of a right angle apart -- a beam sent down
++		// the grip's own forward axis came out of the top of the fist, and
++		// hitting a menu with it meant bending the wrist back until it hurt.
++		// Both are handed over, because both are wanted: a prop hangs off the
++		// grip, a pointer leaves the aim.
++		if (g_accessoryAim.load(std::memory_order_acquire))
++		{
++			simd_float4x4 anchorFromAim =
++				ar_accessory_anchor_get_anchor_from_location_transform_with_correction(
++					anchor, ar_accessory_location_name_aim,
++					ar_transform_correction_rendered);
++			simd_float4x4 aimWorld = simd_mul(g_rigFromOrigin,
++				simd_mul(originFromAnchor, anchorFromAim));
++			simd_float4 ap = aimWorld.columns[3];
++			simd_quatf aq = simd_quaternion(aimWorld);
++			lua_createtable(L, 0, 2);
++			lua_createtable(L, 3, 0);
++			lua_pushnumber(L, ap.x); lua_rawseti(L, -2, 1);
++			lua_pushnumber(L, ap.y); lua_rawseti(L, -2, 2);
++			lua_pushnumber(L, ap.z); lua_rawseti(L, -2, 3);
++			lua_setfield(L, -2, "pos");
++			lua_createtable(L, 4, 0);
++			lua_pushnumber(L, aq.vector.x); lua_rawseti(L, -2, 1);
++			lua_pushnumber(L, aq.vector.y); lua_rawseti(L, -2, 2);
++			lua_pushnumber(L, aq.vector.z); lua_rawseti(L, -2, 3);
++			lua_pushnumber(L, aq.vector.w); lua_rawseti(L, -2, 4);
++			lua_setfield(L, -2, "quat");
++			lua_setfield(L, -2, "aim");
++		}
 +		lua_pop(L, 1);
 +		return true;
 +	});
++	noteAccessoryIdle(tracked == 0);
 +
 +	return 1;
 +}
