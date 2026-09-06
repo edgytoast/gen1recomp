@@ -854,10 +854,10 @@ index f3b0966..071f5b2 100644
  			{
 diff --git a/src/modules/xr/wrap_XR.h b/src/modules/xr/wrap_XR.h
 new file mode 100644
-index 0000000..b9b1c1e
+index 0000000..38d4e72
 --- /dev/null
 +++ b/src/modules/xr/wrap_XR.h
-@@ -0,0 +1,39 @@
+@@ -0,0 +1,48 @@
 +/**
 + * love.xr -- CompositorServices and ARKit, for visionOS. See wrap_XR.mm.
 + */
@@ -881,6 +881,15 @@ index 0000000..b9b1c1e
 +extern "C" bool love_visionos_beginHostFrame(void);
 +extern "C" void love_visionos_endHostFrame(void);
 +
++/// What the game wants of the ROOM: true while it is asking for passthrough.
++///
++/// Polled by the host rather than pushed by Lua, because the switch is the
++/// immersive space's STYLE and that belongs to SwiftUI's main actor. See the
++/// note beside g_wantPassthrough in wrap_XR.mm.
++extern "C" bool love_visionos_wantsPassthrough(void);
++/// ...and what the host actually did, which love.xr.setPassthrough returns.
++extern "C" void love_visionos_setPassthroughActive(bool on);
++
 +/// The eye the mod last finished, for the SIMULATOR only.
 +///
 +/// There, CompositorServices hands out no drawable to LOVE's thread: the mod's
@@ -899,10 +908,10 @@ index 0000000..b9b1c1e
 +#endif // LOVE_XR_WRAP_XR_H
 diff --git a/src/modules/xr/wrap_XR.mm b/src/modules/xr/wrap_XR.mm
 new file mode 100644
-index 0000000..3fadaa8
+index 0000000..3005b04
 --- /dev/null
 +++ b/src/modules/xr/wrap_XR.mm
-@@ -0,0 +1,2887 @@
+@@ -0,0 +1,2929 @@
 +/**
 + * love.xr -- CompositorServices and ARKit, for visionOS.
 + *
@@ -2009,6 +2018,30 @@ index 0000000..3fadaa8
 +// buttons on it. Pairing them anywhere else would mean matching on the vendor
 +// string, which is a guess dressed as an identifier.
 +static id<GCDevice> g_padDevice[2] = { nil, nil };
++// ------- the room, which is the HOST's to grant
++//
++// There is no passthrough LAYER to submit here. visionOS shows the room by
++// the immersive space's STYLE: a mixed space composites what the app draws
++// over the cameras wherever it leaves alpha at zero, and a full one does not.
++// That style belongs to SwiftUI, on the main actor, so Lua cannot set it --
++// it can only ask. The want is left here, the host's own thread reads it
++// while Lua owns the frame loop, moves the space, and writes back what
++// actually happened. Two flags, one direction each, and no lock: a bool that
++// is one frame late costs nothing, and blocking either thread on the other
++// would cost a frame.
++static std::atomic<bool> g_wantPassthrough(false);
++static std::atomic<bool> g_passthroughOn(false);
++
++extern "C" bool love_visionos_wantsPassthrough(void)
++{
++	return g_wantPassthrough.load(std::memory_order_acquire);
++}
++
++extern "C" void love_visionos_setPassthroughActive(bool on)
++{
++	g_passthroughOn.store(on, std::memory_order_release);
++}
++
 +static std::atomic<bool> g_accessoryLive(false);
 +// Whether the loaded accessories carry an AIM point as well as a grip. A pair
 +// of Sense controllers is one model twice, so this is one flag rather than
@@ -3753,8 +3786,26 @@ index 0000000..3fadaa8
 +	return 1;
 +}
 +
++/**
++ * Ask for the room, and learn whether it is up: love.xr.setPassthrough(on).
++ *
++ * Returns the state as it stands NOW, which on the frame of the request is
++ * still the old one -- the space moves on the main actor. A caller that acts
++ * on the answer therefore turns the sky off one frame after the room comes
++ * up rather than one frame before, which is the right way round: a sky
++ * cleared to alpha 0 in a FULL space is not a room, it is a black hole where
++ * the sky was.
++ */
++static int w_setPassthrough(lua_State *L)
++{
++	g_wantPassthrough.store(lua_toboolean(L, 1) != 0, std::memory_order_release);
++	luax_pushboolean(L, g_passthroughOn.load(std::memory_order_acquire));
++	return 1;
++}
++
 +static const luaL_Reg functions[] =
 +{
++	{ "setPassthrough", w_setPassthrough },
 +	{ "accessories", w_accessories },
 +	{ "sticks",      w_sticks      },
 +	{ "buttons",     w_buttons     },

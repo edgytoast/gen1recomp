@@ -33,7 +33,7 @@ struct GRImmersiveContent: CompositorContent {
 
             let model = self.model
             let thread = Thread {
-                if let renderer = GRImmersiveRenderer(layerRenderer) {
+                if let renderer = GRImmersiveRenderer(layerRenderer, model: model) {
                     renderer.run()
                 }
                 // run() only returns once the layer is invalidated, which is
@@ -146,7 +146,12 @@ struct GRApp: App {
         ImmersiveSpace(id: "world") {
             GRImmersiveContent(model: model)
         }
-        .immersionStyle(selection: .constant(.full), in: .full)
+        // Both styles, because MR/AR is the mixed one -- see
+        // GRAppModel.setPassthrough. The selection is the model's rather than
+        // a constant so the game can move it at runtime: the player asks on
+        // the launcher's REALITY row, or on the mod's own VR ladder, and the
+        // space changes under a session that keeps running.
+        .immersionStyle(selection: $model.immersion, in: .mixed, .full)
         // Hides the system's own overlays over this space -- the Home
         // indicator and the affordance a look-up-and-pinch opens Control
         // Centre with.

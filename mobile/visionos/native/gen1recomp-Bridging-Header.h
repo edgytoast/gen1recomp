@@ -54,6 +54,15 @@ void love_visionos_clearLayerRenderer(void *layerRenderer);
 /// two loops calling cp_frame_* on one layer is a race.
 bool love_visionos_xrClaimed(void);
 
+/// THE ROOM, asked for by the game and granted by the shell.
+///
+/// visionOS has no passthrough layer to submit: the immersive space's STYLE
+/// is the switch, and the style lives on the main actor. So the game leaves a
+/// want in love.xr, the compositor thread reads it (it keeps turning even
+/// while Lua owns the frame loop), moves the space, and reports back.
+bool love_visionos_wantsPassthrough(void);
+void love_visionos_setPassthroughActive(bool on);
+
 /// The eye the mod last finished, SIMULATOR only -- see wrap_XR.h. There the
 /// mod cannot present for itself, so the host loop puts this up instead of the
 /// flat virtual screen.

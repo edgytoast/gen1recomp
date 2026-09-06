@@ -26,6 +26,37 @@ final class GRAppModel {
 
     var immersiveState: ImmersiveState = .closed
 
+    // MARK: - The room
+
+    /// Which immersion the space presents.
+    ///
+    /// This is MR/AR, in full: there is no passthrough layer to composite on
+    /// visionOS and nothing for the renderer to switch. A `.mixed` space puts
+    /// what the app draws over the room's own cameras wherever the app leaves
+    /// alpha at zero -- so the mod takes the sky away (its own MR rungs
+    /// already clear it to alpha 0) and the real one is simply there. `.full`
+    /// is the painted world, and every pixel of it is opaque.
+    var immersion: any ImmersionStyle = .full
+
+    private(set) var passthrough = false
+
+    /// Asked for by the game, through love.xr. Reported straight back rather
+    /// than after some observation of the transition, because SwiftUI offers
+    /// nothing to observe: the style is applied on the next update and there
+    /// is no callback for "it took". The visible failure if it does not is
+    /// specific enough to recognise -- a BLACK sky rather than the room --
+    /// which is why this says so in the log.
+    func setPassthrough(_ on: Bool) {
+        guard passthrough != on else { return }
+        passthrough = on
+        // Written out rather than as a ternary: the two are different
+        // concrete types behind the existential, and there is no common one
+        // for the branches to meet in.
+        if on { immersion = .mixed } else { immersion = .full }
+        love_visionos_setPassthroughActive(on)
+        print("[xr] immersion -> \(on ? "mixed (the room)" : "full (the painted world)")")
+    }
+
     /// Whether the player was in VR when they last quit. Restored on the next
     /// launch so the app comes back the way they left it.
     ///

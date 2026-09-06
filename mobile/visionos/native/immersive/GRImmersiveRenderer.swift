@@ -73,8 +73,15 @@ final class GRImmersiveRenderer {
     /// than the field of view at two metres away.
     private let panelHeight: Float = 1.3
 
-    init?(_ layerRenderer: LayerRenderer) {
+    /// The shell's model, for the one thing this thread has to tell it: what
+    /// the game wants of the room. Optional so the renderer stays usable
+    /// without one (nothing else here needs it).
+    private let model: GRAppModel?
+    private var lastPassthroughWant = false
+
+    init?(_ layerRenderer: LayerRenderer, model: GRAppModel? = nil) {
         self.layerRenderer = layerRenderer
+        self.model = model
         // The compositor's device, not MTLCreateSystemDefaultDevice(): the
         // textures we render into belong to it.
         self.device = layerRenderer.device
@@ -104,6 +111,19 @@ final class GRImmersiveRenderer {
                 // Lua owns the loop once the mod turns VR on. Both of us
                 // calling cp_frame_* on one layer would race, so this stands
                 // down entirely rather than trying to interleave.
+                // THE ROOM, polled here because this is the only thread
+                // that keeps turning once Lua owns the frame loop -- and the
+                // want can change at any time, from the launcher's REALITY
+                // row or the mod's own VR ladder. The style is SwiftUI's, so
+                // the change hops to the main actor; setPassthrough writes
+                // back through love.xr what it did.
+                let want = love_visionos_wantsPassthrough()
+                if want != lastPassthroughWant {
+                    lastPassthroughWant = want
+                    if let model {
+                        Task { @MainActor in model.setPassthrough(want) }
+                    }
+                }
                 if love_visionos_xrClaimed() {
                     usleep(4000)
                 } else {

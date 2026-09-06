@@ -141,30 +141,115 @@ local function buildSettings()
     -- The mod itself has no row anywhere: on this build it is not optional.
     if love.xr then
       local Voxel = { FULL = 1, FIRST = 6 }   -- see lib/VoxelState ANGLE_LABELS
+
+      -- ON A HEADSET THERE ARE TWO DECISIONS, and they are one stored value.
+      --
+      -- WHERE YOU STAND -- inside the world, or above it as a model on the
+      -- table -- and WHAT YOU STAND IN: the painted world, or your own room
+      -- with the sky taken away.  The mod keeps both on a single ladder
+      -- (lib/VR's `vr` setting: DIORAMA, DIORAMA +2D, DIORAMA-MR,
+      -- DIORAMA-MR +2D, 1ST PERSON, 1ST PERSON AR), because a d-pad row can
+      -- only step.  A menu with real controls does not have to: these two
+      -- rows are that ladder's two axes, and each writes the rung where the
+      -- other axis stays put.
+      --
+      -- Rows against the MOD's value rather than the engine's voxel ladder,
+      -- which is why the old row did nothing the player could see: the mod
+      -- pins that ladder to the rung its own mode wants, every frame
+      -- (firstPersonRung / dioramaRung), so a level written here was
+      -- overwritten before it could be looked at.  The engine level is
+      -- still set below, for a build with no mod in it -- there the ladder
+      -- IS the view and nothing overwrites it.
+      --
+      -- The +2D rungs are deliberately absent: the floating classic screen
+      -- is a third axis, it belongs to the in-game row and the stick click,
+      -- and a value sitting on one of them reads here as its plain rung.
+      -- Writing either row then normalises to that plain rung, which is the
+      -- honest answer to "make it third person" -- not a silent third state.
+      local VR_MOD = "DRAMATIC_SHAPE"
+      local RUNG = {
+        ["first|vr"] = true,       ["first|mr"] = "first-ar",
+        ["third|vr"] = "diorama",  ["third|mr"] = "diorama-mr",
+      }
+      local function storedVR(options)
+        local m = options.modOptions and options.modOptions[VR_MOD]
+        return m and m.vr
+      end
+      local function personOf(v)
+        -- `true` is 1ST PERSON's stored value; see the ladder in lib/VR.
+        return (v == true or v == "first-ar") and "first" or "third"
+      end
+      local function realityOf(v)
+        return (v == "first-ar" or v == "diorama-mr" or v == "diorama-mr-2d")
+               and "mr" or "vr"
+      end
+      -- Written the way the mod manager's own settings page writes one
+      -- (ManagerState:setOption), because that is the route the mod already
+      -- listens on: the save's options, the loader's copy, and the
+      -- `mod.options_changed` event it adopts the new value from.  The file
+      -- itself is written by our caller, which is why only `options` is
+      -- touched here and not saved.
+      local function setRung(options, value)
+        options.modOptions = options.modOptions or {}
+        options.modOptions[VR_MOD] = options.modOptions[VR_MOD] or {}
+        options.modOptions[VR_MOD].vr = value
+        pcall(function()
+          local Game = require("src.core.Game")
+          local save = Game.save
+          if save and save.options then
+            save.options.modOptions = save.options.modOptions or {}
+            local t = save.options.modOptions
+            t[VR_MOD] = t[VR_MOD] or {}
+            t[VR_MOD].vr = value
+          end
+          local loader = Game.mods
+          if loader then
+            loader.modOptions = loader.modOptions or {}
+            loader.modOptions[VR_MOD] = loader.modOptions[VR_MOD] or {}
+            loader.modOptions[VR_MOD].vr = value
+            if loader.events then
+              loader.events:emit("mod.options_changed",
+                                 { mod = VR_MOD, key = "vr", value = value })
+            end
+          end
+        end)
+      end
+
       return {
         {
-          id = "display", label = "View", default = Voxel.FIRST,
+          id = "display", label = "View", default = "third",
           choices = {
-            { value = Voxel.FIRST, label = "First Person" },
-            { value = Voxel.FULL,  label = "Third Person" },
+            { value = "first", label = "First Person" },
+            { value = "third", label = "Third Person" },
           },
-          get = function(options)
-            local p = options.pipelines
-            return (p and p.voxel) or Voxel.FIRST
-          end,
+          get = function(options) return personOf(storedVR(options)) end,
           set = function(options, value)
+            if value ~= "first" and value ~= "third" then return end
+            setRung(options, RUNG[value .. "|" .. realityOf(storedVR(options))])
+            -- ...and the engine's own ladder, for a build with no mod to
+            -- pin it.  Pipeline levels are read once, when a game loads, so
+            -- the live game is told as well as the file -- written only to
+            -- disk this changed nothing anybody could see until the next
+            -- boot, which is exactly what "I cannot really switch" looks
+            -- like from the launcher.
+            local level = (value == "first") and Voxel.FIRST or Voxel.FULL
             options.pipelines = options.pipelines or {}
-            options.pipelines.voxel = value
-            -- AND ON THE LIVE GAME, not only in the file.
-            --
-            -- Pipeline levels are read once, when a game loads. Written only
-            -- to disk, this row changed nothing anybody could see until the
-            -- next boot -- which is exactly what "I cannot really switch"
-            -- looks like from the launcher, where the game is sitting paused
-            -- behind the window rather than gone.
+            options.pipelines.voxel = level
             pcall(function()
-              require("src.render.Pipelines").setLevel("voxel", value)
+              require("src.render.Pipelines").setLevel("voxel", level)
             end)
+          end,
+        },
+        {
+          id = "reality", label = "Reality", default = "vr",
+          choices = {
+            { value = "vr", label = "VR" },
+            { value = "mr", label = "MR / AR" },
+          },
+          get = function(options) return realityOf(storedVR(options)) end,
+          set = function(options, value)
+            if value ~= "vr" and value ~= "mr" then return end
+            setRung(options, RUNG[personOf(storedVR(options)) .. "|" .. value])
           end,
         },
         -- THE GAME'S LANGUAGE, as a setting rather than a mod row.
