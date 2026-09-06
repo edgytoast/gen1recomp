@@ -166,6 +166,21 @@ function TextBox.paginate(text, maxCols)
         table.remove(lines)
         table.remove(conts)
       end
+      -- A LINE THAT SCROLLS IS A LINE TO WAIT FOR.
+      --
+      -- The box holds two lines, so showing a third pushes the first out
+      -- (beginLine).  The original never needs this: its pages are two lines
+      -- and any further line is authored as <CONT>, which waits.  Ours can
+      -- have more, because a line too wide for the box is soft-wrapped above
+      -- -- and the wrapped remainder carried no wait, so the box scrolled a
+      -- line away by itself and the player was reading text that had already
+      -- moved.  It shows up wherever a name is long: 100 of the game's texts
+      -- do it with a ten-character one, none with a short one, which is why
+      -- it looks arbitrary from the outside.
+      --
+      -- So the wrap gets the wait the author would have written.  Lines one
+      -- and two are untouched: they fill an empty box rather than scroll it.
+      for i = 3, #conts do conts[i] = true end
       if #lines > 0 then
         table.insert(pages, lines)
         table.insert(contBefore, conts)

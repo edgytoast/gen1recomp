@@ -117,6 +117,21 @@ do
   pressed.a = true
   box:update(0)
   check(not box.waiting and not box.contAdvance, "A clears cont wait")
+
+  -- A LINE THAT SCROLLS WAITS, however it came to be there.
+  --
+  -- The box holds two lines, so a third pushes the first out.  The original
+  -- authors that third line as <CONT>; ours can also produce one by
+  -- soft-wrapping a line too wide for the box, and that one used to carry no
+  -- wait -- the box scrolled a line away by itself.  It only showed up when a
+  -- name was long, which is what made it look arbitrary.
+  do
+    local wide = TextBox.paginate("A NAME THAT IS FAR TOO LONG FOR THIS BOX", 18)
+    check(#wide[1] >= 3, "a too-wide line wraps past the two the box shows")
+    check(wide.contBefore[1][3], "and the line that scrolls carries a wait")
+    check(not wide.contBefore[1][1] and not wide.contBefore[1][2],
+          "while the two that fill an empty box do not")
+  end
   eq(box.lineIndex, 3, "A advances into the cont line")
 end
 
