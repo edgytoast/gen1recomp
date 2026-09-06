@@ -74,6 +74,22 @@ local function installed(f, id)
   return f.getInfo(("mods/%s/manifest.json"):format(id)) ~= nil
 end
 
+-- What is ACTUALLY installed, out of its own manifest.
+--
+-- The record's `version` is what shipped when the note was written, which is
+-- not the same question and drifts from it: another build of this app -- a
+-- TestFlight copy shares the bundle id and therefore the whole data container
+-- -- can put an OLDER mod in the folder without touching our note.  Asked of
+-- the record, the answer was "current" while 1.5.4 sat on disk under a note
+-- saying 2.1.3, and nothing ever repaired it.
+local function installedVersion(f, id)
+  local raw = f.read(("mods/%s/manifest.json"):format(id))
+  if not raw then return nil end
+  local ok, m = pcall(Json.decode, raw)
+  if not ok or type(m) ~= "table" then return nil end
+  return type(m.version) == "string" and m.version or nil
+end
+
 local function newer(bundled, seeded)
   local ok, order = pcall(Semver.compare, bundled, seeded)
   if not ok or type(order) ~= "number" then
@@ -100,23 +116,45 @@ function BundledMods.seed(opts)
     local here = installed(f, entry.id)
     local act, why
 
-    if type(was) ~= "table" then
-      -- Never seen. Either plant it, or step back from a copy that was here
-      -- first and remember that it is not ours.
-      if here then
-        rec[entry.id] = { version = entry.version, planted = false }
-        dirty, act, why = true, false, "foreign"
-      else
-        act = true
-      end
-    elseif was.planted == false then
-      act, why = false, "foreign"
-    elseif not here then
-      act, why = false, "removed"
-    elseif newer(entry.version, tostring(was.version or "")) then
+    -- Never seen, and something is already there: remember that it is not
+    -- ours, so a delete later stays a delete.  Noted whether or not this
+    -- build then upgrades it -- the note is about ownership, the decision
+    -- below is about age.
+    if type(was) ~= "table" and here then
+      rec[entry.id] = { version = entry.version, planted = false }
+      was, dirty = rec[entry.id], true
+    end
+
+    if not here then
+      -- Never planted and nothing here: plant it.  Planted before and gone
+      -- now: the player threw it away, and it stays away.
+      act = type(was) ~= "table"
+      why = act and nil or "removed"
+    elseif newer(entry.version, installedVersion(f, entry.id)
+                 -- a manifest with no version of its own: for a copy WE
+                 -- planted the record knows what went in, and that is a
+                 -- better answer than "unorderable, leave it".  For anyone
+                 -- else's copy there is nothing to fall back to, and an age
+                 -- that cannot be read is not an age to overwrite for.
+                 or (was and was.planted and tostring(was.version or "")) or "") then
+      -- OLDER THAN WHAT SHIPS, whoever put it there.
+      --
+      -- A copy this never planted used to be left alone for good, which
+      -- protects two things worth protecting: a working copy pushed straight
+      -- into the mod folder by the dev script, and a mod the player installed
+      -- themselves.  It also meant an app carrying a NEWER mod could not
+      -- repair an older one -- and that is not hypothetical: launching a
+      -- TestFlight build of this same app, which shares the data container
+      -- and ships mods of its own, put 1.5.4 back over a 2.1.3 that had been
+      -- pushed, and every launch afterwards said "nothing to plant".
+      --
+      -- Strictly newer, so both protections survive: the dev loop builds the
+      -- bundle from the same checkout it pushes, so the two versions are
+      -- equal and nothing is touched, and a copy ahead of the app is left
+      -- alone as it always was.
       act = true
     else
-      act, why = false, "current"
+      act, why = false, (was and was.planted == false) and "foreign" or "current"
     end
 
     if act then

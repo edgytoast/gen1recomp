@@ -147,7 +147,47 @@ fsF.files["bundled_mods/index.json"] = index({
 local callsG, installG = recorder(false)
 result = BundledMods.seed({ install = installG })
 check(#callsG == 0,
-  "still left alone when the app ships a newer one -- this is the push_mod_visionos.sh loop")
+  "an age that cannot be read is not an age to overwrite for, whatever ships")
+
+-- ------- ...but a copy that IS older than what ships is repaired
+--
+-- Whoever put it there. Another build of this same app shares the bundle id
+-- and so the whole data container: launching a TestFlight copy put its own
+-- older mod into the folder, our note still said "not ours, leave it", and
+-- every launch after that reported nothing to plant while the old mod ran.
+local fsI = memfs({
+  ["bundled_mods/index.json"] = index({
+    { id = "DRAMATIC_SHAPE", version = "2.1.3",
+      file = "bundled_mods/DRAMATIC_SHAPE.zip" },
+  }),
+  ["bundled_seeded.json"] = Json.encode({
+    DRAMATIC_SHAPE = { version = "2.1.3", planted = false },
+  }),
+  ["mods/DRAMATIC_SHAPE/manifest.json"] = Json.encode({ version = "1.5.4" }),
+})
+love.filesystem = fsI
+local callsI, installI = recorder(false)
+result = BundledMods.seed({ install = installI })
+check(#result.planted == 1,
+  "a copy older than the one shipping is replaced even when it is not ours")
+check(callsI[1] and callsI[1].opts.replace == true, "and replaced rather than merged")
+
+-- ...and the dev loop still holds: push_mod_visionos.sh writes the same
+-- checkout the bundle was built from, so the two versions are EQUAL and
+-- nothing is touched.
+fsI.files["mods/DRAMATIC_SHAPE/manifest.json"] = Json.encode({ version = "2.1.3" })
+fsI.files["bundled_seeded.json"] = Json.encode({
+  DRAMATIC_SHAPE = { version = "2.1.3", planted = false },
+})
+local callsJ, installJ = recorder(false)
+result = BundledMods.seed({ install = installJ })
+check(#callsJ == 0, "a pushed working copy of the shipping version is left alone")
+
+-- ...and one AHEAD of the app, as during a port, is left alone too.
+fsI.files["mods/DRAMATIC_SHAPE/manifest.json"] = Json.encode({ version = "3.0.0" })
+local callsK, installK = recorder(false)
+result = BundledMods.seed({ install = installK })
+check(#callsK == 0, "and so is one ahead of what the app carries")
 
 -- ------- a failed plant is not recorded as done
 local fsH = memfs({
