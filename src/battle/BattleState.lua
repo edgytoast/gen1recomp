@@ -1040,7 +1040,9 @@ function BattleState:startMessage(item)
     local npos = text:find("[\n\v]", pos)
     local chunk = npos and text:sub(pos, npos - 1) or text:sub(pos)
     local codes = Font.encode(chunk)
-    self.lines[#self.lines + 1] = { codes = codes, cont = cont }
+    -- the source chunk beside the codes: the codes are what the box TYPES,
+    -- and they are a poor thing to read back -- see visibleText below
+    self.lines[#self.lines + 1] = { codes = codes, cont = cont, text = chunk }
     self.total = self.total + #codes
     if not npos then break end
     cont = text:sub(npos, npos) == "\v"
@@ -1069,6 +1071,29 @@ function BattleState:beginMsgLine()
     self.scrollPx = 8
   end
   self.shown[#self.shown + 1] = {}
+end
+
+-- The lines currently ON the battle's text box, as text.
+--
+-- The same read TextBox:visibleText offers, for the one place in the game
+-- whose dialogue is NOT a TextBox: a fight prints its own line, on its own
+-- console, out of its own queue. Anything that wants to show that line
+-- somewhere else -- a mod standing the fight's console in the world -- has no
+-- state to ask but this one.
+--
+-- nil unless the box is actually saying something: `messages` is the phase
+-- that prints, and `current` or `animPlaying` is what says a row is being
+-- worked through rather than the queue sitting empty between turns.
+function BattleState:visibleText()
+  if self.phase ~= "messages" or not (self.current or self.animPlaying) then
+    return nil
+  end
+  local out, count = {}, #(self.shown or {})
+  for i = math.max(1, self.lineIndex - count + 1), self.lineIndex do
+    local line = self.lines and self.lines[i]
+    if line then out[#out + 1] = line.text or "" end
+  end
+  return #out > 0 and out or nil
 end
 
 function BattleState:updateQueue()
