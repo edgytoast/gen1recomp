@@ -2831,6 +2831,22 @@ do
   box = ChoiceBox.new(game, function(v) no = v end)
   box:update(0)
   eq(no, false, "ChoiceBox B chooses false")
+
+  -- The shape a mod reads the stack by.  A two-option menu is a plain
+  -- table like every other state, so what tells it apart is that it, and
+  -- nothing else, carries labels AND a first row AND a cursor index.  The
+  -- VR mirror classifies by exactly that triple; without it the choice is
+  -- an unrecognised state and the headset falls back to a panel over the
+  -- player's face instead of a box standing in the world.
+  box = ChoiceBox.new(stubGame({}), function() end)
+  eq(box.labels[1], "YES", "ChoiceBox carries its labels")
+  eq(box.labels[2], "NO", "ChoiceBox carries both labels")
+  eq(box.firstItem, 1, "ChoiceBox names its first row")
+  eq(box.index, 1, "ChoiceBox starts on the first row")
+  box = ChoiceBox.new(stubGame({}), function() end,
+                      { labels = { "NORTH", "SOUTH" }, firstItem = 2 })
+  eq(box.labels[1], "NORTH", "ChoiceBox takes given labels")
+  eq(box.firstItem, 2, "ChoiceBox takes a given first row")
 end
 end
 
