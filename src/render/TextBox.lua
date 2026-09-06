@@ -13,6 +13,16 @@ local Timing = require("src.core.Timing")
 local TextBox = {}
 TextBox.__index = TextBox
 
+-- What this state IS, said on the class rather than inferred from its shape.
+--
+-- A state on the stack is a plain table, and anything that wants to treat
+-- dialogue as dialogue -- the battle API asking who is printing, a mod
+-- mirroring the box into a world window -- otherwise has to guess from the
+-- fields it happens to carry. Guesses go wrong quietly and in both directions.
+-- One flag, checked by identity, and nothing has to know the box's internals
+-- to recognise one.
+TextBox.isTextBox = true
+
 -- theme-free fallbacks; geometry resolves against Theme.textBox at
 -- construction time, so an unthemed boot stays byte-identical
 local BOX_TX, BOX_TY, BOX_TW, BOX_TH = 0, 12, 20, 6
