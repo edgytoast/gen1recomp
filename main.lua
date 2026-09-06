@@ -258,6 +258,18 @@ function love.load(args)
     return
   end
 
+  -- Mods this build ships get planted into the writable mod folder now, before
+  -- anything lists or loads mods.  Once each: the record in
+  -- src/mods/BundledMods.lua is what keeps a mod the player deleted from
+  -- growing back on the next launch.  Never fatal -- a build with nothing
+  -- bundled, or a plant that fails, must still reach the launcher.
+  local okSeed, seedErr = pcall(function()
+    return require("src.mods.BundledMods").seed()
+  end)
+  if not okSeed then
+    require("src.core.Logger").warn("bundled mods: " .. tostring(seedErr))
+  end
+
   local RomImporter = require("src.import.RomImporter")
   local forceImport = os.getenv("POKEPORT_FORCE_IMPORT") == "1"
   local importPath = os.getenv("POKEPORT_IMPORT_ROM")

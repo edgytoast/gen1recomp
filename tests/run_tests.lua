@@ -2629,8 +2629,19 @@ do
   -- Isolate from earlier save/options writes in this suite
   SD.saveOptions(SD.defaultOptions())
   local popped = false
+  -- The stand-in needs applyOptions because the PERFORMANCE row calls it:
+  -- the real Game re-applies the tier live so TILT / GBC FX / ZOOM clamp the
+  -- moment the row moves.  Without it the row raised "attempt to call method
+  -- 'applyOptions'", which is not a failed check but an error -- it killed the
+  -- whole file, and with it every suite below this point: all of tests/mod_*,
+  -- modkit, the ROM-importer files and every parity_*.lua silently stopped
+  -- running.  Recorded rather than ignored, so the row still has to prove it
+  -- applied something.  Recorded ON the stand-in rather than in a local of
+  -- its own: this chunk is already at LuaJIT's ceiling of 200 main-function
+  -- locals, and one more is a compile error rather than a test failure.
   local og = { data = Data, save = SD.newGame(),
                input = OInput, stack = { pop = function() popped = true end },
+               applyOptions = function(self, opts) self.applied = opts end,
                writeOptions = function(self) SD.saveOptions(self.save.options) end }
   local om = OptionsMenu.new(og)
   local function press(btn)
@@ -3338,6 +3349,7 @@ end
 runSuites(orderedGlob("tests/mod_*.lua tests/modkit_tests.lua", {
   "tests/mod_runtime_tests.lua", "tests/mod_loader_tests.lua",
   "tests/mod_registry_tests.lua", "tests/mod_manifest_tests.lua",
+  "tests/mod_bundled_tests.lua",
   "tests/mod_constants_tests.lua", "tests/mod_catalog_tests.lua",
   "tests/mod_audio_tests.lua", "tests/mod_world_tests.lua",
   "tests/mod_battle_tests.lua", "tests/mod_graphics_tests.lua",

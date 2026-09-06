@@ -268,6 +268,68 @@ ensure_manifests() {
   say "import manifests: $MANIFESTS"
 }
 
+# Mods this build plants on first launch.  Paths relative to $ROOT; a path that
+# is not there is skipped with a warning rather than failing the build, because
+# the voxel mod is a sibling checkout that a fresh clone may not have.
+#
+# NOT fused into the game: each mod ships as its own .zip under bundled_mods/,
+# and src/mods/BundledMods.lua installs it into the writable mod folder once,
+# through the same path an "Import mod .zip" takes.  What the player ends up
+# with is an ordinary installed mod they can disable or delete -- see the note
+# in pack_game_love about why a mod read straight out of the app bundle cannot
+# be.
+#
+# mods/deutsch carries text extracted from a German cartridge.  That is the
+# same kind of content game.love refuses to ship under data/generated, and the
+# refusal there is deliberate.  It rides along here because this build is for
+# the author's own headset; a build meant for anyone else should drop it from
+# this list.
+BUNDLED_MODS=("../DramaticShapeVoxelMod" "mods/deutsch")
+
+pack_bundled_mods() {
+  local stage entry src id version count
+  stage="$(mktemp -d)"
+  mkdir -p "$stage/bundled_mods"
+  count=0
+  : > "$stage/index.tsv"
+  for entry in "${BUNDLED_MODS[@]}"; do
+    src="$ROOT/$entry"
+    if [ ! -f "$src/manifest.json" ]; then
+      say "bundled mods: skipping $entry (no manifest.json)"
+      continue
+    fi
+    id="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["id"])' "$src/manifest.json")" \
+      || fail "bundled mods: unreadable manifest in $entry"
+    version="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1])).get("version","0.0.0"))' "$src/manifest.json")"
+    # One folder at the top, which is what LauncherMods.installZip requires;
+    # zipping from the parent under the folder's own name produces exactly that.
+    (cd "$(dirname "$src")" && zip -q -9 -r "$stage/bundled_mods/$id.zip" \
+        "$(basename "$src")" \
+        -x '*/.git/*' -x '*/.DS_Store' -x '*.DS_Store' -x '*/tests/*' \
+        -x '*/.github/*') \
+      || fail "bundled mods: could not pack $entry"
+    printf '%s\t%s\n' "$id" "$version" >> "$stage/index.tsv"
+    count=$((count + 1))
+  done
+
+  if [ "$count" -eq 0 ]; then
+    rm -rf "$stage"
+    say "bundled mods: none"
+    return 0
+  fi
+
+  python3 "$ROOT/scripts/lib/bundled_index.py" \
+    "$stage/index.tsv" "$stage/bundled_mods/index.json" \
+    || fail "bundled mods: could not write the index"
+  rm -f "$stage/index.tsv"
+  (cd "$stage" && zip -q -9 -r "$LOVE_FILE" bundled_mods) \
+    || fail "bundled mods: could not add them to game.love"
+  unzip -Z1 "$LOVE_FILE" | grep -qx "bundled_mods/index.json" \
+    || fail "bundled mods: index.json did not make it into game.love"
+  rm -rf "$stage"
+  say "bundled mods: $count packed (game.love now $(du -h "$LOVE_FILE" | cut -f1))"
+}
+
 pack_game_love() {
   say "packing game.love"
   mkdir -p "$RESOURCES_DIR"
@@ -499,6 +561,7 @@ fetch_love
 patch_love
 ensure_manifests
 pack_game_love
+pack_bundled_mods
 
 if $PACKAGE_ONLY; then
   say "package-only: game.love ready at $LOVE_FILE"
