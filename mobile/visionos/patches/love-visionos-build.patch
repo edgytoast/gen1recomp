@@ -899,10 +899,10 @@ index 0000000..b9b1c1e
 +#endif // LOVE_XR_WRAP_XR_H
 diff --git a/src/modules/xr/wrap_XR.mm b/src/modules/xr/wrap_XR.mm
 new file mode 100644
-index 0000000..35e7aad
+index 0000000..c38a8d8
 --- /dev/null
 +++ b/src/modules/xr/wrap_XR.mm
-@@ -0,0 +1,2685 @@
+@@ -0,0 +1,2704 @@
 +/**
 + * love.xr -- CompositorServices and ARKit, for visionOS.
 + *
@@ -1478,8 +1478,27 @@ index 0000000..35e7aad
 +	if (pipeline == nil)
 +		return false;
 +
-+	constexpr NSUInteger lookupWidth = 256;
-+	constexpr NSUInteger lookupHeight = 256;
++	// 1024, not 256, and the difference is visible rather than theoretical.
++	//
++	// These tables convert between the logical frame and the gaze-packed
++	// raster, and two passes need that conversion to be accurate to about a
++	// pixel: the water's screen-space march, which walks the depth buffer from
++	// logical positions, and anything else that starts from a projected point
++	// rather than from its own fragment. At 256 across a logical field of
++	// nearly seven thousand, one texel spanned some twenty-seven pixels -- and
++	// a rasterization rate map is piecewise linear with KINKS at its zone
++	// boundaries, so interpolating across one smears the kink over all
++	// twenty-seven. The reflection then re-resolved slightly differently every
++	// time the head moved, because the packing moves with the gaze.
++	//
++	// 1024 costs 4 MB a table -- 16 MB for both tables of both eyes, against
++	// eye buffers of 2624x2560 -- and takes the span to under seven pixels,
++	// which is where RG16Float's own resolution becomes the floor (a half
++	// float has about eleven bits of mantissa, so a fraction of a 6888-pixel
++	// field lands no finer than three or four pixels whatever the table's
++	// size). Going further means a wider format, not a bigger texture.
++	constexpr NSUInteger lookupWidth = 1024;
++	constexpr NSUInteger lookupHeight = 1024;
 +	for (int i = 0; i < 2; i++)
 +	{
 +		MTLTextureDescriptor *desc = [MTLTextureDescriptor
