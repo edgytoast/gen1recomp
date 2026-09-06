@@ -40,7 +40,16 @@ function Screens.get(game, id)
   return resolve(game, id)
 end
 
-function Screens.push(game, id, ...)
+-- Make a screen without putting it on the stack.
+--
+-- Pushing is the usual thing to do with one, and for a long time it was the
+-- only thing this offered.  But a screen is also a DESCRIPTION -- the START
+-- menu is the list of what the START menu can do -- and a caller that wants
+-- to run one of its rows without ever showing the menu has no other way to
+-- ask what the rows are.  That is not hypothetical: it is how a mod runs
+-- SAVE or LINK from somewhere else, and with no build() the whole flow ends
+-- in a refusal beep with nothing to say why.
+local function build(game, id, ...)
   local factory = resolve(game, id)
   local inst
   if factory.__modOwned then
@@ -58,6 +67,15 @@ function Screens.push(game, id, ...)
     inst = factory.new(game, ...)
   end
   inst.screenId = inst.screenId or id
+  return inst
+end
+
+function Screens.build(game, id, ...)
+  return build(game, id, ...)
+end
+
+function Screens.push(game, id, ...)
+  local inst = build(game, id, ...)
   game.stack:push(inst)
   return inst
 end
