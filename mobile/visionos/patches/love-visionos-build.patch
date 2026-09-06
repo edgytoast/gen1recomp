@@ -170,7 +170,7 @@ index e52e220..c94ca0e 100644
  #ifdef HAVE_CONFIG_H
  #	include <../config.h>
 diff --git a/src/common/ios.mm b/src/common/ios.mm
-index 8d82f85..fb3dcbf 100644
+index 44253ac..7406acc 100644
 --- a/src/common/ios.mm
 +++ b/src/common/ios.mm
 @@ -296,7 +296,15 @@ - (void)applicationBecameActive:(NSNotification *)note
@@ -899,10 +899,10 @@ index 0000000..b9b1c1e
 +#endif // LOVE_XR_WRAP_XR_H
 diff --git a/src/modules/xr/wrap_XR.mm b/src/modules/xr/wrap_XR.mm
 new file mode 100644
-index 0000000..bb0f8fa
+index 0000000..35e7aad
 --- /dev/null
 +++ b/src/modules/xr/wrap_XR.mm
-@@ -0,0 +1,2664 @@
+@@ -0,0 +1,2685 @@
 +/**
 + * love.xr -- CompositorServices and ARKit, for visionOS.
 + *
@@ -1569,6 +1569,27 @@ index 0000000..bb0f8fa
 +		g_eyeRateValid[i] = true;
 +	}
 +	[cmd commit];
++	// AND WAITED FOR, which committing does not do.
++	//
++	// These two tables are written here and read a few milliseconds later by
++	// the shaders that draw the eyes -- the sky's ray fan decodes a fragment's
++	// packed position with the inverse, the water's depth test addresses the
++	// buffer through the forward one. That is a write-then-read across two
++	// command buffers, and Metal does not order those for you: buffers on one
++	// queue START in commit order and are free to overlap, so a frame where
++	// the eye pass runs ahead of this one samples a table that is half
++	// written.
++	//
++	// It shows exactly as it is: intermittently, on both at once, and it
++	// clears up on its own. The sky's bands tip and follow the head, and the
++	// lake's self test reads depth from the wrong place and discards nearly
++	// every fragment of the surface -- leaving a patch of water hanging in the
++	// air, which is what finally named it.
++	//
++	// The cost is a stall on a pass that is two 256x256 triangles, taken in
++	// beginFrame before either eye starts, which is the cheapest moment in the
++	// frame to take one.
++	[cmd waitUntilCompleted];
 +	return true;
 +}
 +
