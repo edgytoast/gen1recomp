@@ -395,7 +395,19 @@ function TitleState:openMenu()
   local th = #items * 2 + 2
   local menu = Menu.new(game, items, { tx = 0, ty = 0, tw = 13, th = th })
   -- full-width title LOGO zones would recolor this box; see sgbPalettes
-  menu.titleUiBox = { 0, 0, 12, th - 1 }
+  --
+  -- MEASURED OFF THE MENU, not off the 13 it was asked for. Menu.new widens
+  -- itself to the longest label (widest + 3) and may slide tx to keep the box
+  -- on screen, so the box that gets drawn is not always the box that was
+  -- requested -- and a zone written from the request leaves the extra columns
+  -- outside it, where the title's LOGO palette colours them.
+  --
+  -- English never showed it: CONTINUE is eight glyphs and 13 was roomy. German
+  -- SPIEL BEENDEN is thirteen, the box grows to sixteen, and the last three
+  -- columns came out in the logo's red and blue -- with the cursor bar and the
+  -- final letters of the longest item wearing them.
+  menu.titleUiBox = { menu.tx, menu.ty,
+                      menu.tx + menu.tw - 1, menu.ty + menu.th - 1 }
   game.stack:push(menu)
 end
 

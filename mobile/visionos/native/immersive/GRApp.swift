@@ -161,5 +161,19 @@ struct GRApp: App {
         // So if a gesture of ours collides with one of theirs, ours has to
         // move. The fist is the likely one.
         .persistentSystemOverlays(.hidden)
+        // AND THE PLAYER'S OWN ARMS, which a fully immersive space still
+        // composites over the scene by default.
+        //
+        // The reasoning behind that default is sound -- a person who cannot
+        // see their hands in a room they cannot see is disoriented -- but it
+        // is wrong for a controller: the hand comes through the world holding
+        // a Sense controller that the world is also drawing a model of, and
+        // the two occupy the same space. The real one wins on every pixel it
+        // covers, so the virtual one is a shape behind a hand.
+        //
+        // Hidden, the scene owns the view and the tracked props stand in for
+        // the hands -- which is what the diorama's grab and the pokedex were
+        // built around.
+        .upperLimbVisibility(.hidden)
     }
 }
