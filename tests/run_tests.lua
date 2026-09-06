@@ -1610,6 +1610,22 @@ end
 
 -- ---------------------------------------------------------------- old man catch demo
 local demoBattle = BattleState.newWild(Game, "WEEDLE", 5)
+
+-- WHOSE PARTY the fight is fought with, as a method rather than a reach
+-- into game.save.party.  A mod cannot read a local, and one that hands out
+-- experience has to know who is in the fight: asking for this and getting
+-- nil, the mod's EXP SHARE took an empty party and paid it to everyone in
+-- that empty party -- with the switch on, which is its default, nothing
+-- gained experience at all.
+do
+  local view = demoBattle:playerPartyView()
+  check(type(view) == "table", "a battle says whose party it is fought with")
+  eq(view, Game.save.party, "which is the save's, when the battle carries no other")
+  demoBattle.playerParty = { "someone else's" }
+  eq(demoBattle:playerPartyView()[1], "someone else's",
+     "and the battle's own list when it does -- a link fight is not the save")
+  demoBattle.playerParty = nil
+end
 demoBattle:makeOldManDemo()
 local demoDone = nil
 demoBattle.onFinish = function(r) demoDone = r end

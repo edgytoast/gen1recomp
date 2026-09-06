@@ -627,6 +627,23 @@ local function newBattle(game)
   return self
 end
 
+-- WHOSE PARTY this fight is being fought with.
+--
+-- Almost always the save's, and the exception is what makes this a method:
+-- a link battle carries its own list, and code that reached for
+-- game.save.party directly answered for the wrong trainer.  The expression
+-- was already spelled out at the one place that needed it (drawBallRow);
+-- it is a method now because a mod cannot read a local, and one that
+-- distributes experience has to know who is in the fight.
+--
+-- Its absence cost a whole feature quietly: the mod's EXP SHARE asks this,
+-- takes an empty list when it is missing, and pays it to everybody in that
+-- list -- so with the switch ON, which is its default, nothing in the party
+-- gained experience at all.
+function BattleState:playerPartyView()
+  return self.playerParty or self.game.save.party
+end
+
 -- opts.hooked: rod encounter, announced with _HookedMonAttackedText
 function BattleState.newWild(game, species, level, opts)
   local self = newBattle(game)
@@ -5381,7 +5398,7 @@ function BattleState:drawHUDs(slide)
     for i = 10, 17 do hudTile(0x76, i * 8, 88) end
     hudTile(0x6F, 72, 88)
     love.graphics.setColor(1, 1, 1, 1)
-    self:drawBallRow(self.playerParty or self.game.save.party, 88, 80, 8)
+    self:drawBallRow(self:playerPartyView(), 88, 80, 8)
   end
   local hidePlayer = self.safari or self.demo
   if self.player and not hidePlayer and not self.showPlayerBack
