@@ -189,6 +189,13 @@ struct GRLauncherView: View {
                     startRow(game)
                     if !shell.mods.isEmpty { modList }
                     if !shell.settings.isEmpty { settingsList }
+                    // Under the settings, not inside the mod list: the mod
+                    // list is hidden whenever nothing is listed, and the one
+                    // machine that needs this card most -- a fresh install
+                    // with no cartridge and nothing built -- is exactly the
+                    // one with nothing to list.  Putting it there is how it
+                    // went missing in the first place.
+                    stadiumSection
                 }
 
                 if !shell.debugToast.isEmpty {
@@ -369,8 +376,6 @@ struct GRLauncherView: View {
                 .padding(.vertical, 10)
                 .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14))
             }
-
-            stadiumSection
         }
     }
 
