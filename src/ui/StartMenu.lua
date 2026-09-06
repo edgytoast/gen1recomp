@@ -18,6 +18,14 @@ local function sameItems(_, items) return items end
 
 function StartMenu.new(game)
   local flags = game.save.flags or {}
+  -- Each row carries an `id` beside its label: what the row IS, as opposed
+  -- to what it is currently called.  A caller that wants to run one of them
+  -- without showing the menu (Screens.build, and the mod's hand-held POKeDEX
+  -- doing exactly that) has to name it somehow, and the label is the wrong
+  -- handle -- it is translated.  SAVE reads SICHERN on a German catalog, the
+  -- match failed, and the device answered a refusal beep with nothing to say
+  -- why.  Ids are ASCII and never translated; rows appended through the hook
+  -- below may have none, and a caller falls back to the label for those.
   local items = {}
 
   -- vanilla start submenus return here on B (RedisplayStartMenu): the
@@ -27,31 +35,31 @@ function StartMenu.new(game)
 
   -- POKéDEX: only after Oak hands it over
   if flags.EVENT_GOT_POKEDEX then
-    table.insert(items, { label = Strings("POKéDEX"), onSelect = function()
+    table.insert(items, { id = "POKEDEX", label = Strings("POKéDEX"), onSelect = function()
       Screens.push(game, "PokedexMenu", { onCancel = reopen })
     end })
   end
 
   -- POKéMON is always listed (draw_start_menu.asm prints it even with
   -- an empty party; selecting it then just no-ops)
-  table.insert(items, { label = Strings("POKéMON"), onSelect = function()
+  table.insert(items, { id = "POKEMON", label = Strings("POKéMON"), onSelect = function()
     if #game.save.party == 0 then return end
     Screens.push(game, "PartyMenu", { onCancel = reopen })
   end })
 
-  table.insert(items, { label = Strings("ITEM"), onSelect = function()
+  table.insert(items, { id = "ITEM", label = Strings("ITEM"), onSelect = function()
     Screens.push(game, "BagMenu", { onCancel = reopen })
   end })
 
   -- the player's name opens the trainer card (StartMenu_TrainerInfo)
-  table.insert(items, { label = game.save.player.name or "RED",
+  table.insert(items, { id = "PLAYER", label = game.save.player.name or "RED",
     onSelect = function()
       Screens.push(game, "TrainerCard", { onCancel = reopen })
     end })
 
   -- SAVE shows the player/badges/dex/time panel then asks to confirm
   -- (PrintSaveScreenText)
-  table.insert(items, { label = Strings("SAVE"), onSelect = function()
+  table.insert(items, { id = "SAVE", label = Strings("SAVE"), onSelect = function()
     local TextBox = require("src.render.TextBox")
     local badges = require("src.inventory.Badges").count(game.data, game.save)
     local owned = 0
@@ -78,13 +86,13 @@ function StartMenu.new(game)
     }))
   end })
 
-  table.insert(items, { label = Strings("OPTION"), onSelect = function()
+  table.insert(items, { id = "OPTION", label = Strings("OPTION"), onSelect = function()
     Screens.push(game, "OptionsMenu", { onCancel = reopen })
   end })
 
   -- LINK needs a party
   if #game.save.party > 0 then
-    table.insert(items, { label = Strings("LINK"), onSelect = function()
+    table.insert(items, { id = "LINK", label = Strings("LINK"), onSelect = function()
       local LinkState = require("src.link.LinkState")
       game.stack:push(LinkState.new(game))
     end })
@@ -94,7 +102,7 @@ function StartMenu.new(game)
   -- one discovered mod so a vanilla install's menu is unchanged
   local status = game.modStatus
   if status and #(status.available or {}) > 0 then
-    table.insert(items, { label = Strings("MODS"), onSelect = function()
+    table.insert(items, { id = "MODS", label = Strings("MODS"), onSelect = function()
       Screens.push(game, "ManagerState")
     end })
   end
@@ -102,7 +110,7 @@ function StartMenu.new(game)
   -- the original's EXIT just closed the menu (CloseStartMenu); with a
   -- window close button covering that, QUIT instead power-cycles back
   -- to the title after a confirm (defaultNo guards accidental quits)
-  table.insert(items, { label = Strings("QUIT"), onSelect = function()
+  table.insert(items, { id = "QUIT", label = Strings("QUIT"), onSelect = function()
     local TextBox = require("src.render.TextBox")
     game.stack:push(TextBox.new(game, Strings("RETURN TO MAIN\nMENU?"), nil, {
       defaultNo = true,

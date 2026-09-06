@@ -1576,6 +1576,23 @@ for _, it in ipairs(menu2.items) do labels2[it.label] = true end
 check(labels2["POKéDEX"] and labels2["POKéMON"],
       "POKéDEX and POKéMON appear once earned")
 
+-- Every builtin row names itself, in ASCII that no catalog rewrites.  A
+-- caller that runs a row without showing the menu has to name it somehow,
+-- and the label is the wrong handle: SAVE reads SICHERN in German, and the
+-- one caller that matched on it worked in English and refused in every other
+-- language.
+-- scoped: the main chunk is at LuaJIT's 200-local ceiling
+do
+  local ids, unnamed = {}, 0
+  for _, it in ipairs(menu2.items) do
+    if it.id then ids[it.id] = it.label else unnamed = unnamed + 1 end
+  end
+  check(ids["SAVE"], "the SAVE row carries a translation-proof id")
+  check(ids["ITEM"] and ids["OPTION"] and ids["QUIT"],
+        "so do ITEM, OPTION and QUIT")
+  eq(unnamed, 0, "no builtin row is left without one")
+end
+
 -- ---------------------------------------------------------------- old man catch demo
 local demoBattle = BattleState.newWild(Game, "WEEDLE", 5)
 demoBattle:makeOldManDemo()
