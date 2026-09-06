@@ -28,6 +28,16 @@
 "starting…" = "startet…";
 
 "View" = "Ansicht";
+
+/* --- Pokémon Stadium --- */
+"Pokémon Stadium" = "Pokémon Stadium";
+"Models are built. Selectable under Battles." = "Modelle sind gebaut. Auswählbar unter Kämpfe.";
+"Cartridge imported — the models build in game." = "Kassette importiert — die Modelle werden im Spiel gebaut.";
+"Import a cartridge to build the 3D battle models." = "Importiere eine Kassette, um die 3D-Kampfmodelle zu bauen.";
+"Import cartridge…" = "Kassette importieren…";
+"Replace…" = "Ersetzen…";
+"Battles" = "Kämpfe";
+"Standard" = "Standard";
 /* Nicht übersetzt, mit Absicht: "Egoperspektive" und "Verfolgerperspektive"
    sagt hier niemand, und die englischen Kurzformen sind das, was gemeint ist. */
 "First Person" = "1st Person";

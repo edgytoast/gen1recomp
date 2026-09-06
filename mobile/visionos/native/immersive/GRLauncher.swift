@@ -35,6 +35,11 @@ struct GRLauncherView: View {
     /// binding on dismissal BEFORE running the completion handler, so a target
     /// derived from that binding is always nil by the time the file arrives.
     @State private var importInto: String?
+    /// The Stadium cartridge's own picker and its last verdict. Its own
+    /// state, and its own .fileImporter on the mods section, for the reason
+    /// the save picker has one: SwiftUI presents ONE per view.
+    @State private var showStadiumPicker = false
+    @State private var stadiumMessage = ""
     @State private var showSavePicker = false
     @State private var romMessage = ""
     @State private var pads = GRControllers()
@@ -363,6 +368,67 @@ struct GRLauncherView: View {
                 .padding(.horizontal, 14)
                 .padding(.vertical, 10)
                 .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14))
+            }
+
+            stadiumSection
+        }
+    }
+
+    /// THE STADIUM CARTRIDGE.
+    ///
+    /// The mod's 3D battlers are Pokemon Stadium's own models, so it ships
+    /// none and the player supplies the cartridge -- it reads whatever is
+    /// under baseroms/ and builds its packs from that.  Its own import row
+    /// opens a file dialog through a shell (osascript, PowerShell, zenity),
+    /// and there is no shell here, so on this platform that row can do
+    /// nothing at all.  On Quest the launcher owns the import instead; that
+    /// file is Quest-specific and stayed out of the port, and this is the
+    /// same job for the launcher we do have.
+    ///
+    /// The import only.  Whether the cartridge is the right one, and the
+    /// model build itself, stay with the mod, which already says both on its
+    /// own screen -- two answers in two places is how they come to disagree.
+    /// What to say about the cartridge, in the order the player needs it:
+    /// the models are the point, the cartridge is only how they get here.
+    private var stadiumStatusKey: String {
+        if GRRomImport.stadiumPackCount > 0 {
+            return "Models are built. Selectable under Battles."
+        }
+        if GRRomImport.stadiumRomName != nil {
+            return "Cartridge imported — the models build in game."
+        }
+        return "Import a cartridge to build the 3D battle models."
+    }
+
+    private var stadiumSection: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(trKey("Pokémon Stadium"))
+                    Text(trKey(stadiumStatusKey))
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+                Spacer()
+                Button(trKey(GRRomImport.stadiumRomName == nil
+                             ? "Import cartridge…" : "Replace…")) {
+                    showStadiumPicker = true
+                }
+            }
+            if !stadiumMessage.isEmpty {
+                Text(stadiumMessage).font(.caption).foregroundStyle(.secondary)
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14))
+        .fileImporter(isPresented: $showStadiumPicker,
+                      allowedContentTypes: GRRomImport.stadiumContentTypes,
+                      allowsMultipleSelection: false) { result in
+            switch result {
+            case .success(let urls):
+                if let url = urls.first { stadiumMessage = GRRomImport.acceptStadium(url) }
+            case .failure(let error):
+                stadiumMessage = "Import cancelled: \(error.localizedDescription)"
             }
         }
     }

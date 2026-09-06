@@ -189,10 +189,10 @@ local function buildSettings()
       -- `mod.options_changed` event it adopts the new value from.  The file
       -- itself is written by our caller, which is why only `options` is
       -- touched here and not saved.
-      local function setRung(options, value)
+      local function setModOption(options, key, value)
         options.modOptions = options.modOptions or {}
         options.modOptions[VR_MOD] = options.modOptions[VR_MOD] or {}
-        options.modOptions[VR_MOD].vr = value
+        options.modOptions[VR_MOD][key] = value
         pcall(function()
           local Game = require("src.core.Game")
           local save = Game.save
@@ -200,19 +200,44 @@ local function buildSettings()
             save.options.modOptions = save.options.modOptions or {}
             local t = save.options.modOptions
             t[VR_MOD] = t[VR_MOD] or {}
-            t[VR_MOD].vr = value
+            t[VR_MOD][key] = value
           end
           local loader = Game.mods
           if loader then
             loader.modOptions = loader.modOptions or {}
             loader.modOptions[VR_MOD] = loader.modOptions[VR_MOD] or {}
-            loader.modOptions[VR_MOD].vr = value
+            loader.modOptions[VR_MOD][key] = value
             if loader.events then
               loader.events:emit("mod.options_changed",
-                                 { mod = VR_MOD, key = "vr", value = value })
+                                 { mod = VR_MOD, key = key, value = value })
             end
           end
         end)
+      end
+      local function setRung(options, value)
+        setModOption(options, "vr", value)
+      end
+
+      -- WHERE THE 3D BATTLERS COME FROM.
+      --
+      -- The mod stages every fight; what differs is whose models stand in it
+      -- -- the game's own art, or Pokemon Stadium's, built out of a cartridge
+      -- the player supplies (lib/StadiumInstall).  The mod's own row hides
+      -- the STADIUM rungs until those models exist, because a stop that does
+      -- nothing reads as a broken mod, and this row does the same: the
+      -- choice appears once there is something behind it.
+      --
+      -- Asked of the packs themselves rather than of the mod, because the
+      -- launcher runs before the game does -- there is no mod loaded yet to
+      -- ask.  One .dsm per species, written where the mod writes them.
+      local function stadiumBuilt()
+        local ok, items = pcall(love.filesystem.getDirectoryItems,
+                                "dramatic_shape/stadium")
+        if not (ok and items) then return false end
+        for _, name in ipairs(items) do
+          if name:lower():match("%.dsm$") then return true end
+        end
+        return false
       end
 
       return {
@@ -238,6 +263,27 @@ local function buildSettings()
             pcall(function()
               require("src.render.Pipelines").setLevel("voxel", level)
             end)
+          end,
+        },
+        {
+          id = "battles", label = "Battles", default = true,
+          choices = stadiumBuilt()
+            and { { value = true, label = "Standard" },
+                  { value = "stadium", label = "Pokémon Stadium" } }
+            or { { value = true, label = "Standard" } },
+          get = function(options)
+            local m = options.modOptions and options.modOptions[VR_MOD]
+            local v = m and m.battles
+            -- the mod's ladder keeps retired rungs (flatB, stadiumB, false)
+            -- so a stored one still means what it meant; both map onto the
+            -- two stops that are actually offered
+            if v == "stadium" or v == "stadiumB" then return "stadium" end
+            return true
+          end,
+          set = function(options, value)
+            if value ~= true and value ~= "stadium" then return end
+            if value == "stadium" and not stadiumBuilt() then return end
+            setModOption(options, "battles", value)
           end,
         },
         {
