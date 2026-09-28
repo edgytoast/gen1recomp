@@ -113,6 +113,57 @@ end
 -- has to name the one it means.
 local LANGUAGE_MOD = "deutsch"
 
+-- ---- the Pokemon Stadium battle models
+--
+-- The mod builds those models out of a Pokemon Stadium cartridge the player
+-- supplies, and writes a marker next to the finished packs. Both paths belong
+-- to the mod (lib/StadiumInstall) and are named here rather than asked for:
+-- the mod is not loaded while the launcher is up, so there is nobody to ask.
+--
+-- Same arrangement as the Game Boy ROM, and for the same reason: no cartridge
+-- data ships, so until the player supplies one there is nothing behind the
+-- setting and the row is not offered.
+local STADIUM_ROM_DIR = "baseroms"
+local STADIUM_MARKER = "dramatic_shape/stadium/pack.info"
+
+local function stadiumInstalled()
+  local ok, info = pcall(love.filesystem.getInfo, STADIUM_MARKER, "file")
+  return (ok and info ~= nil) and true or false
+end
+
+-- The cartridge waiting to be built from, if one is. That is the state
+-- between the import and the next start -- the window says so, because a
+-- player who just handed over a 64 MB file and sees nothing change has been
+-- told nothing.
+local function stadiumRomFile()
+  local ok, items = pcall(love.filesystem.getDirectoryItems, STADIUM_ROM_DIR)
+  if not ok then return nil end
+  for _, f in ipairs(items or {}) do
+    local e = tostring(f):lower():match("%.(%w+)$")
+    if e == "z64" or e == "n64" or e == "v64" then return f end
+  end
+  return nil
+end
+
+-- Everything the window has to know about the cartridge, in one field: is a
+-- file there, are the models built, and -- while it is happening -- how far the
+-- build has got. The build itself runs HERE, in the launcher, rather than
+-- waiting for somebody to start a game and walk into the world; see
+-- src/mods/StadiumInstaller.lua.
+local function stadiumState()
+  local out = { installed = stadiumInstalled(), rom = stadiumRomFile() ~= nil }
+  local ok, progress = pcall(function()
+    return require("src.mods.StadiumInstaller").progress()
+  end)
+  if ok and type(progress) == "table" then
+    out.building = true
+    out.done = progress.done
+    out.total = progress.total
+    out.error = progress.error
+  end
+  return out
+end
+
 local function buildSettings()
   if SETTINGS then return SETTINGS end
   local ok, built = pcall(function()
@@ -218,28 +269,6 @@ local function buildSettings()
         setModOption(options, "vr", value)
       end
 
-      -- WHERE THE 3D BATTLERS COME FROM.
-      --
-      -- The mod stages every fight; what differs is whose models stand in it
-      -- -- the game's own art, or Pokemon Stadium's, built out of a cartridge
-      -- the player supplies (lib/StadiumInstall).  The mod's own row hides
-      -- the STADIUM rungs until those models exist, because a stop that does
-      -- nothing reads as a broken mod, and this row does the same: the
-      -- choice appears once there is something behind it.
-      --
-      -- Asked of the packs themselves rather than of the mod, because the
-      -- launcher runs before the game does -- there is no mod loaded yet to
-      -- ask.  One .dsm per species, written where the mod writes them.
-      local function stadiumBuilt()
-        local ok, items = pcall(love.filesystem.getDirectoryItems,
-                                "dramatic_shape/stadium")
-        if not (ok and items) then return false end
-        for _, name in ipairs(items) do
-          if name:lower():match("%.dsm$") then return true end
-        end
-        return false
-      end
-
       return {
         {
           id = "display", label = "View", default = "third",
@@ -263,27 +292,6 @@ local function buildSettings()
             pcall(function()
               require("src.render.Pipelines").setLevel("voxel", level)
             end)
-          end,
-        },
-        {
-          id = "battles", label = "Battles", default = true,
-          choices = stadiumBuilt()
-            and { { value = true, label = "Standard" },
-                  { value = "stadium", label = "Pokémon Stadium" } }
-            or { { value = true, label = "Standard" } },
-          get = function(options)
-            local m = options.modOptions and options.modOptions[VR_MOD]
-            local v = m and m.battles
-            -- the mod's ladder keeps retired rungs (flatB, stadiumB, false)
-            -- so a stored one still means what it meant; both map onto the
-            -- two stops that are actually offered
-            if v == "stadium" or v == "stadiumB" then return "stadium" end
-            return true
-          end,
-          set = function(options, value)
-            if value ~= true and value ~= "stadium" then return end
-            if value == "stadium" and not stadiumBuilt() then return end
-            setModOption(options, "battles", value)
           end,
         },
         {
@@ -330,6 +338,42 @@ local function buildSettings()
             options.mods[LANGUAGE_MOD] = (value == "de")
           end,
         },
+        -- WHAT STANDS IN A FIGHT, once there is something to choose between.
+        --
+        -- The mod's own 3D-BTL ladder, written the way the View row writes
+        -- the voxel one -- and it has to be here, because that row is hidden
+        -- from the in-game menu while VR is on (it decides nothing there),
+        -- which on this build is always. Without this the STADIUM rung would
+        -- exist and be unreachable.
+        --
+        -- `when` keeps it out of the window entirely until a cartridge has
+        -- been built from: an option that can be picked and changes nothing
+        -- reads as a broken app, and the import row above it is what the
+        -- player needs first.
+        --
+        -- Carried as STRINGS rather than the ladder's own values, which are
+        -- `true` and "stadium" -- one JSON field with two types is a trap for
+        -- the window that has to decode it. The mapping is right here, in
+        -- both directions, and nowhere else.
+        {
+          id = "battles", label = "Battles", default = "standard",
+          choices = {
+            { value = "standard", label = "Standard" },
+            { value = "stadium", label = "Pokémon Stadium" },
+          },
+          when = stadiumInstalled,
+          get = function(options)
+            local m = options.modOptions and options.modOptions.DRAMATIC_SHAPE
+            return (m and m.battles == "stadium") and "stadium" or "standard"
+          end,
+          set = function(options, value)
+            -- Through setModOption, like the two rows above: the file alone
+            -- is not enough while a game is sitting paused behind this
+            -- window, and the mod adopts a value from mod.options_changed.
+            setModOption(options, "battles",
+                         (value == "stadium") and "stadium" or true)
+          end,
+        },
       }
     end
 
@@ -363,16 +407,50 @@ local function settingsSnapshot()
   options = okO and options or {}
   local out = {}
   for _, s in ipairs(buildSettings()) do
+    -- A row may not exist yet. `when` is asked HERE, on every publish, and
+    -- not in buildSettings: that list is built once and cached, so a row
+    -- that only appears after the player supplies a cartridge would never
+    -- turn up in a list built before they did.
+    if not (s.when and not s.when()) then
     local v = s.get and s.get(options) or options[s.id]
     if v == nil then v = s.default end
     out[#out + 1] = {
       id = s.id, label = s.label, value = v, choices = s.choices,
     }
+    end
   end
   return out
 end
 
 -- ---------------------------------------------------------------- publishing
+
+-- Whether the debug gate is open, for the window to hide things behind.
+--
+-- The same flag the ten-press gesture sets (setDebug above), read back out of
+-- the mod's options rather than kept in a second place here: one answer, and
+-- it survives the boot into the game where the other hidden menus live.
+-- Public, because the pause menu asks the same question: its MODS row is
+-- hidden on this build for the same reason the window's list is.
+function NativeShell.debugEnabled()
+  local SaveData = require("src.core.SaveData")
+  local okO, options = pcall(SaveData.loadOptions)
+  if not okO or type(options) ~= "table" then return false end
+  local m = options.modOptions and options.modOptions.DRAMATIC_SHAPE
+  return (m ~= nil and m.debug == true)
+end
+
+local debugEnabled = NativeShell.debugEnabled
+
+-- FORWARD-DECLARED, and the reason is worth the two lines.
+--
+-- snapshot() below reads importState, and the importer's own section is
+-- further down this file. A local declared AFTER the function that reads it is
+-- not the same variable: the function is compiled against a global of that
+-- name, which nothing ever assigns, so it reads nil for ever. Every refusal
+-- was published as no import at all -- the window had a row ready to show the
+-- reason and never received one, which is precisely what "no error message"
+-- looked like from the outside.
+local importer, importState
 
 local function snapshot()
   local RomImporter = require("src.import.RomImporter")
@@ -468,12 +546,37 @@ local function snapshot()
 
   return { games = games, mods = mods, settings = settingsSnapshot(),
            exportFile = exportFile,
+           -- Nil until the first import of this run, then the last thing the
+           -- importer said -- progress while it works, and the reason if it
+           -- refused.
+           import = importState,
+           -- The window hides the mod list behind this. Mods are a developer's
+           -- concern on a build whose one mod is not optional.
+           debug = debugEnabled(),
+           -- WHETHER A GAME IS IN MEMORY, which is not the same question as
+           -- whether one is on screen: the Crown lands in the launcher with
+           -- the game still loaded behind it, and Play then resumes rather
+           -- than loads.
+           --
+           -- The window asks because changing the language means ending that
+           -- game, and it needs to know whether there is one to end. It used
+           -- to answer from its own bookkeeping, which is wrong whenever the
+           -- two fall out of step -- an engine restart clears this and leaves
+           -- the window still believing a game is up.
+           booted = NativeShell.booted == true,
            -- Whether the save editor owns the screen. Said out loud rather
            -- than inferred: while it is up this module stands down and stops
            -- publishing, so the window's only other way to know would be to
            -- watch the file's timestamp -- and publish() writes only on
            -- change, so that timestamp says nothing at all.
            editing = NativeShell.editing == true,
+           -- The Pokemon Stadium cartridge, in the two states the window has
+           -- to tell apart: the models are BUILT (the Battles row is there),
+           -- or a file is sitting in baseroms/ and the next start will build
+           -- from it. Between those two the player has handed over a large
+           -- file and nothing visible has happened yet, which is exactly when
+           -- an app has to say something.
+           stadium = stadiumState(),
            ready = true }
 end
 
@@ -489,6 +592,99 @@ end
 
 -- ---------------------------------------------------------------- commands
 
+-- An import running right now, and what to say about the last one.
+--
+-- The window used to copy the player's pick into the save directory and tell
+-- them to restart the app, because nothing here could decode it. That is a
+-- poor thing to ask of anyone and an unreasonable thing to ask of an App Store
+-- reviewer -- and it also swallowed every refusal: a ROM the importer will not
+-- take produced no message at all, just a launcher that still said no ROM.
+--
+-- So the importer runs here, driven by the same update the shell already gets,
+-- and its status goes into the snapshot for the window to show.
+-- importer / importState are declared above snapshot(), which reads them.
+
+local function startRomImport(file)
+  local RomImporter = require("src.import.RomImporter")
+  -- launcher = true keeps it from handing off to boot when it finishes: the
+  -- player is standing in the window, and what they get afterwards is a Play
+  -- button, not a game that started itself.
+  importer = RomImporter.new(nil, { launcher = true })
+
+  -- The constructor scans the save directory itself, and by the time it
+  -- returns it has usually done one of two things: started on the file, or
+  -- REFUSED it -- and a refusal is a finished state carrying the message the
+  -- player needs ("SHA-1 … this needs a clean US dump"). Only an untouched
+  -- importer gets started by hand here.
+  --
+  -- Checking for "error" as well as "working" is the whole point: without it
+  -- this reached for a file the refusal had already consumed, found nothing,
+  -- and replaced a message that said exactly what was wrong with one that said
+  -- the file could not be read.
+  if importer.workState ~= "working" and importer.workState ~= "error"
+     and type(file) == "string" then
+    local data = love.filesystem.read(file)
+    if data then
+      importer:startData(data, file)
+    else
+      importer:setError("The picked file could not be read.")
+    end
+  end
+
+  -- Whatever it decided, published as it stands rather than as an assumption.
+  importState = {
+    state = importer.workState,
+    status = importer.status or "Reading the cartridge",
+    detail = importer.detail,
+    progress = importer.progress or 0,
+  }
+  if importer.workState ~= "working" then importer = nil end
+  lastPublished = nil
+end
+
+-- Whatever the importer is saying, in the shape the window reads.
+local function pumpImport(dt)
+  if not importer then return end
+  importer:update(dt or 0)
+
+  importState = {
+    state = importer.workState,
+    status = importer.status,
+    detail = importer.detail,
+    progress = importer.progress or 0,
+  }
+
+  if importer.workState ~= "working" then
+    -- Done, one way or the other. The importer goes; its last words stay, so
+    -- the window can show "Ready" or the reason it refused.
+    importer = nil
+    Logger.info("native shell: import finished (%s)", tostring(importState.state))
+  end
+  -- Readiness changed, or the progress did; either way the window wants it.
+  lastPublished = nil
+end
+
+-- One settings row, written straight into the global options file -- which is
+-- where every one of these already lives, so the in-game OPTIONS menu reads
+-- and writes the same keys and a value set here is the value it shows.
+--
+-- Its own function because two commands need it: `setOption`, and `restart`,
+-- which carries the change that made a restart necessary in the first place.
+local function applyOption(id, value)
+  local SaveData = require("src.core.SaveData")
+  local okO, options = pcall(SaveData.loadOptions)
+  if not (okO and type(options) == "table") then return end
+  local row = nil
+  for _, r in ipairs(buildSettings()) do
+    if r.id == id then row = r end
+  end
+  if row and row.set then row.set(options, value) else options[id] = value end
+  pcall(SaveData.saveOptions, options)
+  Logger.info("native shell: setOption %s = %s -> stored %s",
+              tostring(id), tostring(value),
+              tostring(row and row.get and row.get(options) or options[id]))
+end
+
 local function applyCommand(cmd)
   -- The editor's own verbs first. It publishes its own snapshot and answers
   -- its own commands; this module only decides that they are not its
@@ -501,6 +697,29 @@ local function applyCommand(cmd)
   if cmd.version == "demo" and cmd.action ~= "boot" then return end
 
   local LauncherMods = require("src.mods.LauncherMods")
+
+  -- The window has just copied a file in and wants it decoded now.
+  if cmd.action == "importRom" then
+    if not importer then startRomImport(cmd.file or "picked_rom.gb") end
+    return
+  end
+
+  -- The Pokémon Stadium cartridge, just copied into baseroms/ by the window.
+  -- Built right here rather than on the first frame of a game: the player is
+  -- standing in the launcher with the file in their hand, and that is when
+  -- they expect something to happen. A failure is published in the same field
+  -- the progress is, so the window says it where it asked for the file.
+  if cmd.action == "buildStadium" then
+    local ok, err = pcall(function()
+      return require("src.mods.StadiumInstaller").begin()
+    end)
+    if not ok then
+      Logger.warn("native shell: the stadium build would not start: %s",
+                  tostring(err))
+    end
+    lastPublished = nil
+    return
+  end
 
   if cmd.action == "setMod" and type(cmd.id) == "string" then
     pcall(LauncherMods.setEnabled, cmd.id, cmd.enabled == true)
@@ -532,20 +751,7 @@ local function applyCommand(cmd)
   -- where every one of these already lives -- the in-game OPTIONS menu reads
   -- and writes the same keys, so a value set here is the value it shows.
   if cmd.action == "setOption" and type(cmd.id) == "string" then
-    local SaveData = require("src.core.SaveData")
-    local okO, options = pcall(SaveData.loadOptions)
-    if okO and type(options) == "table" then
-      local row = nil
-      for _, r in ipairs(buildSettings()) do
-        if r.id == cmd.id then row = r end
-      end
-      if row and row.set then row.set(options, cmd.value)
-      else options[cmd.id] = cmd.value end
-      pcall(SaveData.saveOptions, options)
-      Logger.info("native shell: setOption %s = %s -> stored %s",
-                  tostring(cmd.id), tostring(cmd.value),
-                  tostring(row and row.get and row.get(options) or options[cmd.id]))
-    end
+    applyOption(cmd.id, cmd.value)
     lastPublished = nil
     return
   end
@@ -705,6 +911,36 @@ local function applyCommand(cmd)
     return
   end
 
+  -- A CHANGE ONLY A FRESH BOOT CAN APPLY. The language, today.
+  --
+  -- Mods merge once, in love.load, and `boot` below deliberately RESUMES a
+  -- game that is already in memory rather than loading it again -- loading
+  -- twice re-registers everything the mods registered and the registry
+  -- rightly refuses. So there is no way to change the set of loaded mods from
+  -- inside a run, and returning to the launcher does not help: the launcher is
+  -- the same run.
+  --
+  -- love.event.quit("restart") is the engine's own answer to that. It tears
+  -- the LOVE state down and runs love.load again in the same process -- no
+  -- exit(0), which visionOS would rightly hold against an app, and no lost
+  -- window: the host's screen and the space outlive it.
+  if cmd.action == "restart" then
+    -- THE SETTING TRAVELS WITH THE RESTART, in one command.
+    --
+    -- The channel is a single file: two commands written back to back inside
+    -- one poll interval means the second overwrites the first, and the first
+    -- is simply gone. Sending "set the language" and then "restart" did
+    -- exactly that -- the game ended and came back in the language it had,
+    -- because the setting never arrived. One command cannot lose half of
+    -- itself.
+    if type(cmd.option) == "table" and type(cmd.option.id) == "string" then
+      applyOption(cmd.option.id, cmd.option.value)
+    end
+    Logger.info("native shell: restarting the engine to re-merge mods")
+    pcall(function() love.event.quit("restart") end)
+    return
+  end
+
   if cmd.action == "boot" then
     local version = cmd.version
     -- An unknown or missing version boots Red rather than nothing: the shell
@@ -805,6 +1041,15 @@ end
 -- Publishing still only happens while the launcher is up; what runs here for
 -- a booted game is one file existence check per poll interval.
 function NativeShell.update(dt)
+  -- Every frame, ahead of the poll clock below: the importer does its work
+  -- between the yields of its own coroutine, so it advances once per call.
+  -- Ten calls a second would stretch a minute of decoding into ten.
+  pumpImport(dt)
+  -- and the Stadium models, for the same reason and on the same terms: it
+  -- steps against a time budget of its own, so this only has to be the thing
+  -- that calls it often.
+  pcall(function() require("src.mods.StadiumInstaller").pump() end)
+
   timer = timer + (dt or 0)
   if timer < POLL_INTERVAL then return end
   timer = 0
@@ -826,6 +1071,10 @@ function NativeShell.update(dt)
     local allowed = cmd.action == "toLauncher" or cmd.action == "setOption"
                     or cmd.action == "setDebug" or cmd.action == "boot"
                     or cmd.action == "exportTaken"
+                    -- Restarting is a mid-game verb by nature: it exists for
+                    -- exactly the case where a game is loaded and something
+                    -- that only love.load reads has changed underneath it.
+                    or cmd.action == "restart"
                     or (type(cmd.action) == "string" and cmd.action:sub(1, 3) == "ed.")
     if not allowed then cmd = nil end
   end

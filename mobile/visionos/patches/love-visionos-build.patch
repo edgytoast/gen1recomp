@@ -908,10 +908,10 @@ index 0000000..38d4e72
 +#endif // LOVE_XR_WRAP_XR_H
 diff --git a/src/modules/xr/wrap_XR.mm b/src/modules/xr/wrap_XR.mm
 new file mode 100644
-index 0000000..3005b04
+index 0000000..74f6b23
 --- /dev/null
 +++ b/src/modules/xr/wrap_XR.mm
-@@ -0,0 +1,2929 @@
+@@ -0,0 +1,3095 @@
 +/**
 + * love.xr -- CompositorServices and ARKit, for visionOS.
 + *
@@ -2387,6 +2387,24 @@ index 0000000..3005b04
 +			// The accessories come AFTER the answer: loading one before the
 +			// permission exists gets a provider that runs and reports nothing.
 +			dispatch_async(dispatch_get_main_queue(), ^{ rebuildAccessories(); });
++
++			// AND SO DOES THE SESSION ITSELF, for the same reason.
++			//
++			// The lesson above was drawn for the accessories and not applied
++			// to the providers that were already running: the run below
++			// happens while this request is still outstanding, so on the first
++			// launch after an install the hand provider starts unauthorized --
++			// and an unauthorized provider does not fail, it simply reports
++			// nothing, for the whole run. Granting the permission changes
++			// nothing by itself; something has to run the session again, and
++			// nothing did.
++			//
++			// Which is exactly what "the hands do nothing, the pad works"
++			// looks like from inside the headset.
++			//
++			// Re-running is cheap and is already how the tracked set is
++			// changed elsewhere in this file.
++			runProviders();
 +		});
 +
 +	runProviders();
@@ -3224,6 +3242,15 @@ index 0000000..3005b04
 +// replaced, and handing Lua a new object each frame would make every canvas
 +// cache downstream rebuild itself.
 +static love::graphics::Texture *g_screenTexture = nullptr;
++// The Metal handle g_screenTexture was built from.
++//
++// A C++ static outlives a LOVE restart -- love.event.quit("restart") tears the
++// graphics module down and builds a new one, but nothing here is reset,
++// because this is the same process. So the wrapper went on handing Lua a
++// Texture belonging to a graphics module that no longer exists, and everything
++// that samples it -- the pokedex screen, the panel -- drew black. Remembering
++// which handle it was built from is what makes that detectable.
++static void *g_screenHandle = nullptr;
 +
 +static int w_screenTexture(lua_State *L)
 +{
@@ -3231,16 +3258,28 @@ index 0000000..3005b04
 +	if (gfx == nullptr)
 +		return 0;
 +
++	void *handle = gfx->getVirtualScreenTexture();
++	if (handle == nullptr)
++		return 0;
++
++	// A DIFFERENT HANDLE MEANS A DIFFERENT RUN. Rebuild against it.
++	//
++	// Dropped rather than released: the object belongs to a graphics module
++	// that has already been destroyed, and calling into it to free something
++	// is a worse bug than leaving one texture wrapper behind. A restart is a
++	// rare, deliberate act -- one leaked wrapper per language change is a
++	// price worth paying for not touching freed memory.
++	if (g_screenTexture != nullptr && handle != g_screenHandle)
++		g_screenTexture = nullptr;
++
 +	if (g_screenTexture == nullptr)
 +	{
-+		void *handle = gfx->getVirtualScreenTexture();
-+		if (handle == nullptr)
-+			return 0;
 +		love::graphics::Texture *t = nullptr;
 +		luax_catchexcept(L, [&]() { t = gfx->newTextureFromHandle(handle); });
 +		if (t == nullptr)
 +			return 0;
 +		g_screenTexture = t;
++		g_screenHandle = handle;
 +	}
 +
 +	luax_pushtype(L, g_screenTexture);
@@ -3317,6 +3356,38 @@ index 0000000..3005b04
 +// of both.
 +static const float FIST_GAP = 0.10f;
 +
++// A thumbs-up, measured on the hand rather than on its bearing: the thumb
++// reaching out of a closed hand (wrist to tip) and standing clear of the
++// folded index beside it. Generous for the same reason the pinch is -- a
++// threshold that feels exact is one that drops the gesture while it is held.
++static const float THUMB_OUT_GAP = 0.085f;
++static const float THUMB_CLEAR_GAP = 0.055f;
++
++// A flat, open hand -- every long finger extended, little one included. It is
++// the fist test read from the other end, and the wide band between the two
++// (0.10 to 0.14) is deliberate: a half-curled hand should be NEITHER, so that
++// a hand on its way from one shape to the other passes through nothing rather
++// than flickering between both.
++static const float OPEN_GAP = 0.14f;
++
++// A THUMBS-UP IS EASIER TO KEEP THAN TO START.
++//
++// The gesture exists to be held while the hand travels, and a travelling hand
++// is one the cameras read worse: it turns, the fingers face away, the skeleton
++// softens, and every gap wobbles. On one threshold that shows up as a walk
++// that only goes the way the hand was already pointing -- push it anywhere
++// else and the gesture dies halfway, taking the latched origin with it.
++//
++// So entering asks for the shape plainly, and staying only asks that it has
++// not become some OTHER shape. The band between the two is what a hand passes
++// through while it moves, and it belongs to whichever state the hand was
++// already in.
++static const float THUMB_HOLD_OUT_GAP = 0.070f;
++static const float THUMB_HOLD_CLEAR_GAP = 0.042f;
++static const float FIST_HOLD_GAP = 0.130f;
++// Per hand, by index: 0 left, 1 right.
++static bool g_thumbsUpHeld[2] = { false, false };
++
 +/**
 + * The hands, as gestures rather than skeletons.
 + *
@@ -3358,6 +3429,11 @@ index 0000000..3005b04
 +		lua_createtable(L, 0, 6);
 +		ar_hand_anchor_t anchor = g_handAnchors[i];
 +		bool tracked = anchor != nullptr && ar_hand_anchor_is_tracked(anchor);
++		// A hand that has gone is not still making a gesture. Without this the
++		// loose hold above would survive the gap and re-latch on a hand that
++		// came back doing something else entirely.
++		if (!tracked)
++			g_thumbsUpHeld[i] = false;
 +
 +		lua_pushboolean(L, tracked);
 +		lua_setfield(L, -2, "tracked");
@@ -3401,10 +3477,20 @@ index 0000000..3005b04
 +				ar_hand_skeleton_joint_name_thumb_tip,
 +				ar_hand_skeleton_joint_name_middle_finger_tip);
 +
++			// The ring finger too: with the index and middle pinches spoken
++			// for on both hands, it is the third gesture a hand can make
++			// without moving out of a comfortable rest -- and unlike a fist
++			// it does not overlap with the thumbs-up beside it.
++			float ringGap = jointGap(skel,
++				ar_hand_skeleton_joint_name_thumb_tip,
++				ar_hand_skeleton_joint_name_ring_finger_tip);
++
 +			lua_pushboolean(L, indexGap >= 0 && indexGap < PINCH_GAP);
 +			lua_setfield(L, -2, "pinchIndex");
 +			lua_pushboolean(L, middleGap >= 0 && middleGap < PINCH_GAP);
 +			lua_setfield(L, -2, "pinchMiddle");
++			lua_pushboolean(L, ringGap >= 0 && ringGap < PINCH_GAP);
++			lua_setfield(L, -2, "pinchRing");
 +
 +			// A fist: the three long fingers folded to the wrist together.
 +			// Testing all three keeps a pointing hand or a pinch from
@@ -3417,8 +3503,88 @@ index 0000000..3005b04
 +				ar_hand_skeleton_joint_name_ring_finger_tip);
 +			bool fist = w1 >= 0 && w2 >= 0 && w3 >= 0
 +					 && w1 < FIST_GAP && w2 < FIST_GAP && w3 < FIST_GAP;
-+			lua_pushboolean(L, fist);
++			// The same fold, judged loosely -- for a gesture already under way
++			// (see THUMB_HOLD_OUT_GAP).
++			bool folded = w1 >= 0 && w2 >= 0 && w3 >= 0
++					   && w1 < FIST_HOLD_GAP && w2 < FIST_HOLD_GAP
++					   && w3 < FIST_HOLD_GAP;
++
++			// A thumbs-up: the same folded fingers, with the thumb standing
++			// clear of them.
++			//
++			// Two tests, because either alone lies. A thumb merely far from
++			// the wrist is also a pointing hand's thumb; a thumb merely clear
++			// of the index tip happens whenever the fingers are open. Together
++			// they describe one shape: fingers in, thumb out.
++			//
++			// The SHAPE only -- deliberately not "and pointing at the sky".
++			// A gesture that is held while the hand moves is a gesture whose
++			// wrist rolls, and a world-up test would drop it halfway through
++			// exactly the movement it exists to measure. What people call a
++			// thumbs-up is the hand, not its bearing.
++			float wt = jointGap(skel, ar_hand_skeleton_joint_name_wrist,
++				ar_hand_skeleton_joint_name_thumb_tip);
++			float ti = jointGap(skel, ar_hand_skeleton_joint_name_thumb_tip,
++				ar_hand_skeleton_joint_name_index_finger_tip);
++			bool thumbsUp = g_thumbsUpHeld[i]
++				? (folded && wt >= THUMB_HOLD_OUT_GAP
++						  && ti >= THUMB_HOLD_CLEAR_GAP)
++				: (fist && wt >= THUMB_OUT_GAP && ti >= THUMB_CLEAR_GAP);
++			g_thumbsUpHeld[i] = thumbsUp;
++
++			// A thumbs-up folds three fingers and would otherwise read as a
++			// fist as well -- and the fist is START. Reporting both would put
++			// the pause menu on screen every time this gesture began.
++			lua_pushboolean(L, fist && !thumbsUp);
 +			lua_setfield(L, -2, "fist");
++			lua_pushboolean(L, thumbsUp);
++			lua_setfield(L, -2, "thumbsUp");
++
++			// A flat hand, for gestures made by two of them: the three
++			// gaps above plus the little finger, all standing out.
++			//
++			// The little finger earns its place here even though the fist
++			// test does without it: a fist is unmistakable from three
++			// fingers, but a hand held out with the little one still
++			// curled is a shape people make without meaning anything by
++			// it, and it should not read as flat.
++			float w4 = jointGap(skel, ar_hand_skeleton_joint_name_wrist,
++				ar_hand_skeleton_joint_name_little_finger_tip);
++			bool open = w1 >= OPEN_GAP && w2 >= OPEN_GAP
++					 && w3 >= OPEN_GAP && w4 >= OPEN_GAP;
++			lua_pushboolean(L, open);
++			lua_setfield(L, -2, "open");
++
++			// WHERE THE THUMB POINTS, as a unit vector in the same space
++			// the pose is reported in.
++			//
++			// From the JOINTS, knuckle to tip, and deliberately not from
++			// the hand anchor's rotation: the anchor's axes do not line up
++			// with anything a person would call the palm -- the pokedex
++			// needs a quarter turn and an eighth on top of it to sit right
++			// -- so a direction derived from the anchor inherits a
++			// correction nobody has measured for the thumb. Two joints
++			// have no such quarrel: the line between them IS the thumb.
++			simd_float3 tk, tt;
++			if (jointPos(skel, ar_hand_skeleton_joint_name_thumb_knuckle, &tk)
++			 && jointPos(skel, ar_hand_skeleton_joint_name_thumb_tip, &tt))
++			{
++				simd_float3 d = tt - tk;
++				float len = simd_length(d);
++				if (len > 1e-5f)
++				{
++					// Into world with the ROTATION only: a direction has no
++					// position to be moved by, and translating it would turn
++					// a unit vector into a point somewhere across the room.
++					simd_float3 w = simd_normalize(
++						simd_mul(world, simd_make_float4(d.x, d.y, d.z, 0.0f)).xyz);
++					lua_createtable(L, 3, 0);
++					lua_pushnumber(L, w.x); lua_rawseti(L, -2, 1);
++					lua_pushnumber(L, w.y); lua_rawseti(L, -2, 2);
++					lua_pushnumber(L, w.z); lua_rawseti(L, -2, 3);
++					lua_setfield(L, -2, "thumbDir");
++				}
++			}
 +		}
 +
 +		lua_rawseti(L, -2, i + 1);

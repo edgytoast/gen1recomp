@@ -37,8 +37,14 @@ enum GRRomImport {
         return names.contains { $0.lowercased().hasSuffix(".gb") || $0.lowercased().hasSuffix(".gbc") }
     }
 
-    /// Copies a picked file in as picked_rom.gb. Returns a message to show.
-    static func accept(_ source: URL) -> String {
+    /// Copies a picked file in as picked_rom.gb. Returns nil when that worked,
+    /// or a message to show when it did not.
+    ///
+    /// Only the copy. What the file IS -- a cartridge this engine knows, or one
+    /// it refuses -- is the engine's answer, and it gives it while the app runs
+    /// (GRShell.importRom). This used to end with "Restart to decode it",
+    /// which was true and is no longer.
+    static func accept(_ source: URL) -> String? {
         guard let dir = saveDirectory else { return "No save directory." }
 
         // A file from the document picker lives outside the sandbox until
@@ -55,7 +61,7 @@ enum GRRomImport {
             // the engine identifies the ROM by SHA-1 rather than by name.
             let dest = dir.appendingPathComponent("picked_rom.gb")
             try data.write(to: dest, options: .atomic)
-            return "Imported \(source.lastPathComponent) (\(data.count / 1024) KB). Restart to decode it."
+            return nil
         } catch {
             return "Import failed: \(error.localizedDescription)"
         }
@@ -66,88 +72,5 @@ enum GRRomImport {
     static var contentTypes: [UTType] {
         [UTType(filenameExtension: "gb"), UTType(filenameExtension: "gbc")]
             .compactMap { $0 } + [.data]
-    }
-
-    // MARK: - The Stadium cartridge
-    //
-    // The mod's 3D battlers are Pokemon Stadium's own models, so the mod
-    // ships none and the player supplies the cartridge.  It looks for one
-    // under `baseroms/` on the read path and builds its packs from whatever
-    // it finds there (lib/StadiumInstall).
-    //
-    // Its own importer opens a file dialog through a shell -- osascript,
-    // PowerShell, zenity -- and there is no shell here, so on this platform
-    // that row cannot do anything.  On Quest the launcher owns the import
-    // instead (lib/QuestLauncher), and that file is Quest-specific and was
-    // left out of the port: this is the same job for the launcher we do have.
-    //
-    // The last metre only.  Nothing here validates the cartridge or builds a
-    // model: the mod already does both, says so on its own screen, and doing
-    // it twice in two languages is how the two answers come to disagree.
-
-    /// `baseroms/` under the save directory -- the one place that is always
-    /// writable and always on the read path (StadiumInstall.romHint says so
-    /// itself, and it is what a packaged build needs).
-    static var stadiumDirectory: URL? {
-        saveDirectory?.appendingPathComponent("baseroms", isDirectory: true)
-    }
-
-    private static let stadiumExtensions = ["z64", "n64", "v64"]
-
-    /// The cartridge's own name, if one is in: the mod matches by extension
-    /// (`%.[nvz]64$`), so this asks the same question the same way.
-    static var stadiumRomName: String? {
-        guard let dir = stadiumDirectory,
-              let names = try? FileManager.default.contentsOfDirectory(atPath: dir.path)
-        else { return nil }
-        return names.sorted().first { name in
-            stadiumExtensions.contains((name as NSString).pathExtension.lowercased())
-        }
-    }
-
-    /// Copies a picked cartridge into `baseroms/`, under its own name.
-    ///
-    /// Under its OWN name, not a fixed one: the mod scans the folder rather
-    /// than looking for a particular file, and a name the player recognises
-    /// is what makes "which cartridge is in?" answerable at a glance.
-    static func acceptStadium(_ source: URL) -> String {
-        guard let dir = stadiumDirectory else { return "No save directory." }
-        let ext = source.pathExtension.lowercased()
-        guard stadiumExtensions.contains(ext) else {
-            return "That is not an N64 cartridge (.z64, .n64 or .v64)."
-        }
-
-        let scoped = source.startAccessingSecurityScopedResource()
-        defer { if scoped { source.stopAccessingSecurityScopedResource() } }
-
-        do {
-            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-            let data = try Data(contentsOf: source)
-            let dest = dir.appendingPathComponent(source.lastPathComponent)
-            try data.write(to: dest, options: .atomic)
-            return "Imported \(source.lastPathComponent) (\(data.count / 1024 / 1024) MB). "
-                 + "The models build in game, on the loading screen."
-        } catch {
-            return "Import failed: \(error.localizedDescription)"
-        }
-    }
-
-    /// How many model packs have been built out of it.
-    ///
-    /// Read, not inferred: a cartridge sitting in the folder says nothing
-    /// about whether anything came of it, and "imported" with no models is
-    /// exactly the state a player would otherwise have no way to see.  The
-    /// mod writes one .dsm per species into dramatic_shape/stadium.
-    static var stadiumPackCount: Int {
-        guard let dir = saveDirectory?
-                .appendingPathComponent("dramatic_shape", isDirectory: true)
-                .appendingPathComponent("stadium", isDirectory: true),
-              let names = try? FileManager.default.contentsOfDirectory(atPath: dir.path)
-        else { return 0 }
-        return names.filter { $0.lowercased().hasSuffix(".dsm") }.count
-    }
-
-    static var stadiumContentTypes: [UTType] {
-        stadiumExtensions.compactMap { UTType(filenameExtension: $0) } + [.data]
     }
 }
